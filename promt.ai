@@ -1,0 +1,6 @@
+I want to create a app to log my expenses,
+i should have the option to add money in rupees. data, and description. Description can be empty also.
+I have 2 credit card so want to tract the expense.
+add the option to edit the expenses also.
+update names of cards, card 1 to ICICI Amazon Pay, card 2 to ICICI Coral RuPay.
+add the option of recycle bin, for example by mistake i delete a expense, i can undo it from bin. 
