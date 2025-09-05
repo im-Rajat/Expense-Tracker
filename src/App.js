@@ -47,7 +47,7 @@ export default function App() {
 
             const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
                 if (user) {
-                    setUser(user.uid);
+                    setUserId(user.uid);
                 } else {
                     try {
                         // We sign in anonymously since we're on a public site
