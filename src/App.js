@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, serverTimestamp } from 'firebase/firestore';
 
 // --- Helper Functions & Constants ---
@@ -45,19 +45,17 @@ export default function App() {
             setDb(dbInstance);
             setAuth(authInstance);
 
-            const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
+            const unsubscribe = onAuthStateChanged(authInstance, (user) => {
                 if (user) {
                     setUserId(user.uid);
                 } else {
-                    try {
-                        // We sign in anonymously since we're on a public site
-                        await signInAnonymously(authInstance);
-                    } catch (authError) {
-                        console.error("Firebase sign-in error:", authError);
-                        setError("Could not connect to the service.");
-                    }
+                    setUserId(null);
+                    // Clear user data on logout
+                    setExpenses([]);
+                    setRecycleBin([]);
                 }
                 setIsAuthReady(true);
+                setIsLoading(false); // Stop loading once auth state is determined
             });
             return () => unsubscribe();
         } catch (e) {
@@ -69,7 +67,11 @@ export default function App() {
 
     // --- Firestore Data Fetching ---
     useEffect(() => {
-        if (!isAuthReady || !db || !userId) return;
+        if (!isAuthReady || !db || !userId) {
+            // If user logs out, we should not proceed.
+            if (!userId) setIsLoading(false);
+            return;
+        }
 
         setIsLoading(true);
 
@@ -93,7 +95,7 @@ export default function App() {
         const qRecycleBin = query(collection(db, recycleBinPath));
         const unsubscribeRecycleBin = onSnapshot(qRecycleBin, (querySnapshot) => {
             const binData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-             binData.sort((a, b) => new Date(b.date) - new Date(a.date));
+            binData.sort((a, b) => new Date(b.date) - new Date(a.date));
             setRecycleBin(binData);
         }, (err) => {
             console.error("Error fetching recycle bin:", err);
@@ -105,6 +107,47 @@ export default function App() {
             unsubscribeRecycleBin();
         };
     }, [isAuthReady, db, userId]);
+
+    // --- Auth Handlers ---
+    const handleSignUp = async (email, password) => {
+        setError('');
+        try {
+            await createUserWithEmailAndPassword(auth, email, password);
+        } catch (err) {
+            setError(err.message);
+            console.error("Sign up error:", err);
+        }
+    };
+
+    const handleLogin = async (email, password) => {
+        setError('');
+        try {
+            await signInWithEmailAndPassword(auth, email, password);
+        } catch (err) {
+            setError(err.message);
+            console.error("Login error:", err);
+        }
+    };
+
+    const handleAnonymousSignIn = async () => {
+        setError('');
+        try {
+            await signInAnonymously(auth);
+        } catch (err) {
+            setError(err.message);
+            console.error("Anonymous sign-in error:", err);
+        }
+    };
+
+    const handleLogout = async () => {
+        setError('');
+        try {
+            await signOut(auth);
+        } catch (err) {
+            setError("Failed to log out.");
+            console.error("Logout error:", err);
+        }
+    };
 
     // --- CRUD Handlers ---
     const handleAddExpense = async (expense) => {
@@ -200,10 +243,22 @@ export default function App() {
     }, [expenses]);
 
     // --- Render Logic ---
+    if (!isAuthReady) {
+        return (
+            <div className="bg-gray-100 min-h-screen flex items-center justify-center">
+                <p>Loading application...</p>
+            </div>
+        );
+    }
+
+    if (!userId) {
+        return <LoginScreen onLogin={handleLogin} onSignUp={handleSignUp} onAnonymous={handleAnonymousSignIn} error={error} />;
+    }
+
     return (
         <div className="bg-gray-100 min-h-screen font-sans text-gray-800 p-4 sm:p-6 lg:p-8">
             <div className="max-w-4xl mx-auto">
-                <Header userId={userId} />
+                <Header userId={userId} onLogout={handleLogout} />
                 <main>
                     <SummaryCards totals={totals} />
                     <NavBar currentView={currentView} setCurrentView={setCurrentView} onAddNew={() => openModal()} />
@@ -239,11 +294,88 @@ export default function App() {
 
 // --- Sub-components ---
 
-const Header = ({ userId }) => (
-    <header className="mb-6 text-center">
-        <h1 className="text-4xl font-bold text-indigo-600">Expense Tracker</h1>
-        <p className="text-gray-500 mt-1">Log and manage your credit card expenses with ease.</p>
-        {userId && <p className="text-xs text-gray-400 mt-2 break-all">User ID: {userId}</p>}
+const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error }) => {
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+
+    const handleSubmit = (e, handler) => {
+        e.preventDefault();
+        if (!email || !password) {
+            alert("Please enter both email and password.");
+            return;
+        }
+        handler(email, password);
+    };
+
+    return (
+        <div className="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+            <div className="w-full max-w-sm">
+                <header className="mb-6 text-center">
+                    <h1 className="text-4xl font-bold text-indigo-600">Expense Tracker</h1>
+                    <p className="text-gray-500 mt-1">Sign in to continue</p>
+                </header>
+                <div className="bg-white p-8 rounded-xl shadow-lg">
+                    <form onSubmit={(e) => handleSubmit(e, onLogin)}>
+                        <div className="mb-4">
+                            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                            <input
+                                type="email"
+                                id="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                placeholder="you@example.com"
+                                required
+                            />
+                        </div>
+                        <div className="mb-6">
+                            <label htmlFor="password"className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                            <input
+                                type="password"
+                                id="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                placeholder="••••••••"
+                                required
+                            />
+                        </div>
+                        {error && <p className="text-red-500 text-sm text-center mb-4">{error}</p>}
+                        <div className="flex flex-col gap-3">
+                           <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                                Login
+                            </button>
+                             <button type="button" onClick={(e) => handleSubmit(e, onSignUp)} className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                                Sign Up
+                            </button>
+                        </div>
+                    </form>
+                    <div className="my-6 flex items-center">
+                        <div className="flex-grow border-t border-gray-300"></div>
+                        <span className="mx-4 text-sm text-gray-500">OR</span>
+                        <div className="flex-grow border-t border-gray-300"></div>
+                    </div>
+                    <button onClick={onAnonymous} className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg transition-colors">
+                        Continue Anonymously
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const Header = ({ userId, onLogout }) => (
+    <header className="mb-6">
+        <div className="flex justify-between items-start">
+            <div className="text-center flex-1">
+                 <h1 className="text-4xl font-bold text-indigo-600">Expense Tracker</h1>
+                 <p className="text-gray-500 mt-1">Log and manage your credit card expenses with ease.</p>
+                 {userId && <p className="text-xs text-gray-400 mt-2 break-all">User ID: {userId}</p>}
+            </div>
+            <button onClick={onLogout} className="ml-4 bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-3 rounded-lg text-sm transition-colors">
+                Logout
+            </button>
+        </div>
     </header>
 );
 
@@ -400,14 +532,14 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense }) => {
                         <div>
                              <label className="block text-sm font-medium text-gray-700 mb-2">Card</label>
                              <div className="flex gap-4">
-                                <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === CARD_1_NAME ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}>
-                                    <input type="radio" name="card" value={CARD_1_NAME} checked={formData.card === CARD_1_NAME} onChange={handleChange} className="sr-only" />
-                                    <span className="font-semibold text-sm">{CARD_1_NAME}</span>
-                                </label>
-                                <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === CARD_2_NAME ? 'border-green-500 bg-green-50' : 'border-gray-300'}`}>
-                                    <input type="radio" name="card" value={CARD_2_NAME} checked={formData.card === CARD_2_NAME} onChange={handleChange} className="sr-only" />
-                                    <span className="font-semibold text-sm">{CARD_2_NAME}</span>
-                                </label>
+                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === CARD_1_NAME ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}>
+                                     <input type="radio" name="card" value={CARD_1_NAME} checked={formData.card === CARD_1_NAME} onChange={handleChange} className="sr-only" />
+                                     <span className="font-semibold text-sm">{CARD_1_NAME}</span>
+                                 </label>
+                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === CARD_2_NAME ? 'border-green-500 bg-green-50' : 'border-gray-300'}`}>
+                                     <input type="radio" name="card" value={CARD_2_NAME} checked={formData.card === CARD_2_NAME} onChange={handleChange} className="sr-only" />
+                                     <span className="font-semibold text-sm">{CARD_2_NAME}</span>
+                                 </label>
                              </div>
                         </div>
                     </div>
@@ -428,4 +560,3 @@ const PencilIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" hei
 const TrashIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>);
 const UndoIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"></path><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path></svg>);
 const XCircleIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>);
-
