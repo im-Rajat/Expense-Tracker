@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, serverTimestamp, orderBy } from 'firebase/firestore';
+import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, serverTimestamp, orderBy, writeBatch } from 'firebase/firestore';
 
 // --- Main App Component ---
 export default function App() {
@@ -16,6 +16,9 @@ export default function App() {
     const [cardNames, setCardNames] = useState({ card1: 'Card 1', card2: 'Card 2' });
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
+    const [selectedExpenses, setSelectedExpenses] = useState([]);
+    const [selectedBinItems, setSelectedBinItems] = useState([]);
+
 
     // Firebase state
     const [db, setDb] = useState(null);
@@ -137,6 +140,28 @@ export default function App() {
         };
     }, [isAuthReady, db, userId]);
 
+    // --- Selection Handlers ---
+    const handleToggleSelect = (expenseId, view) => {
+        const setSelection = view === 'expenses' ? setSelectedExpenses : setSelectedBinItems;
+        setSelection(prev => 
+            prev.includes(expenseId) 
+                ? prev.filter(id => id !== expenseId) 
+                : [...prev, expenseId]
+        );
+    };
+
+    const handleToggleSelectAll = (view) => {
+        const sourceList = view === 'expenses' ? expenses : recycleBin;
+        const selectedList = view === 'expenses' ? selectedExpenses : selectedBinItems;
+        const setSelection = view === 'expenses' ? setSelectedExpenses : setSelectedBinItems;
+
+        if (selectedList.length === sourceList.length) {
+            setSelection([]);
+        } else {
+            setSelection(sourceList.map(item => item.id));
+        }
+    };
+    
     // --- Auth Handlers ---
     const handleSignUp = async (email, password) => {
         setError('');
@@ -230,6 +255,29 @@ export default function App() {
             setError("Failed to delete expense.");
         }
     };
+    
+    const handleDeleteSelected = async () => {
+        if (!db || !userId || selectedExpenses.length === 0) return;
+        
+        const batch = writeBatch(db);
+        const expensesToMove = expenses.filter(exp => selectedExpenses.includes(exp.id));
+
+        expensesToMove.forEach(expense => {
+            const expenseRef = doc(db, `users/${userId}/expenses`, expense.id);
+            const binRef = doc(db, `users/${userId}/recycleBin`, expense.id);
+            batch.set(binRef, expense);
+            batch.delete(expenseRef);
+        });
+
+        try {
+            await batch.commit();
+            setSelectedExpenses([]);
+        } catch (e) {
+            console.error("Error moving selected to recycle bin: ", e);
+            setError("Failed to delete selected expenses.");
+        }
+    };
+
 
     const handleRestoreExpense = async (expense) => {
         if (!db || !userId) return;
@@ -241,6 +289,28 @@ export default function App() {
         } catch (e) {
             console.error("Error restoring expense: ", e);
             setError("Failed to restore expense.");
+        }
+    };
+
+    const handleRestoreSelected = async () => {
+        if (!db || !userId || selectedBinItems.length === 0) return;
+
+        const batch = writeBatch(db);
+        const itemsToRestore = recycleBin.filter(item => selectedBinItems.includes(item.id));
+
+        itemsToRestore.forEach(item => {
+            const expenseRef = doc(db, `users/${userId}/expenses`, item.id);
+            const binRef = doc(db, `users/${userId}/recycleBin`, item.id);
+            batch.set(expenseRef, item);
+            batch.delete(binRef);
+        });
+
+        try {
+            await batch.commit();
+            setSelectedBinItems([]);
+        } catch (e) {
+            console.error("Error restoring selected items: ", e);
+            setError("Failed to restore selected items.");
         }
     };
 
@@ -256,6 +326,27 @@ export default function App() {
             }
         }
     };
+
+    const handlePermanentDeleteSelected = async () => {
+        if (!db || !userId || selectedBinItems.length === 0) return;
+        
+        if (window.confirm(`Are you sure you want to permanently delete ${selectedBinItems.length} items? This action cannot be undone.`)) {
+            const batch = writeBatch(db);
+            selectedBinItems.forEach(id => {
+                const binRef = doc(db, `users/${userId}/recycleBin`, id);
+                batch.delete(binRef);
+            });
+
+            try {
+                await batch.commit();
+                setSelectedBinItems([]);
+            } catch (e) {
+                console.error("Error permanently deleting selected items: ", e);
+                setError("Failed to permanently delete selected items.");
+            }
+        }
+    };
+
 
     // --- Modal Control ---
     const openModal = (expense = null) => {
@@ -319,9 +410,28 @@ export default function App() {
                     ) : (
                         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 sm:p-6 mt-4">
                             {currentView === 'expenses' ? (
-                                <ExpenseList expenses={expenses} onEdit={openModal} onDelete={handleDeleteExpense} cardNames={cardNames} />
+                                <ExpenseList 
+                                    expenses={expenses} 
+                                    onEdit={openModal} 
+                                    onDelete={handleDeleteExpense} 
+                                    cardNames={cardNames}
+                                    selectedExpenses={selectedExpenses}
+                                    onToggleSelect={(id) => handleToggleSelect(id, 'expenses')}
+                                    onToggleSelectAll={() => handleToggleSelectAll('expenses')}
+                                    onDeleteSelected={handleDeleteSelected}
+                                />
                             ) : (
-                                <RecycleBin bin={recycleBin} onRestore={handleRestoreExpense} onDelete={handlePermanentDelete} cardNames={cardNames} />
+                                <RecycleBin 
+                                    bin={recycleBin} 
+                                    onRestore={handleRestoreExpense} 
+                                    onDelete={handlePermanentDelete} 
+                                    cardNames={cardNames}
+                                    selectedBinItems={selectedBinItems}
+                                    onToggleSelect={(id) => handleToggleSelect(id, 'bin')}
+                                    onToggleSelectAll={() => handleToggleSelectAll('bin')}
+                                    onRestoreSelected={handleRestoreSelected}
+                                    onDeleteSelected={handlePermanentDeleteSelected}
+                                />
                             )}
                         </div>
                     )}
@@ -475,57 +585,108 @@ const NavBar = ({ currentView, setCurrentView, onAddNew }) => (
     </div>
 );
 
-const ExpenseList = ({ expenses, onEdit, onDelete, cardNames }) => {
+const ExpenseList = ({ expenses, onEdit, onDelete, cardNames, selectedExpenses, onToggleSelect, onToggleSelectAll, onDeleteSelected }) => {
     if (expenses.length === 0) {
         return <p className="text-center text-gray-500 dark:text-gray-400 py-8">No expenses yet. Add one to get started!</p>;
     }
     const getCardName = (cardId) => cardId === 'card1' ? cardNames.card1 : cardNames.card2;
     
     return (
-        <div className="space-y-3">
-            {expenses.map(expense => (
-                <div key={expense.id} className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors">
-                    <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${expense.card === 'card1' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400' : 'bg-green-100 text-green-600 dark:bg-green-900/50 dark:text-green-400'}`}>
-                            <CreditCardIcon />
-                        </div>
-                        <div>
-                            <p className="font-bold text-lg">₹{parseFloat(expense.amount).toFixed(2)}</p>
-                            <p className="text-sm text-gray-600 dark:text-gray-300">{expense.description || 'No description'}</p>
-                            <p className="text-xs text-gray-400 dark:text-gray-500">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <button onClick={() => onEdit(expense)} className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 rounded-full transition-colors"><PencilIcon /></button>
-                        <button onClick={() => onDelete(expense)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 rounded-full transition-colors"><TrashIcon /></button>
-                    </div>
+        <div>
+            {selectedExpenses.length > 0 && (
+                <div className="flex items-center justify-between p-2 mb-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
+                    <span className="text-sm font-medium">{selectedExpenses.length} selected</span>
+                    <button onClick={onDeleteSelected} className="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-lg text-sm">Delete Selected</button>
                 </div>
-            ))}
+            )}
+            <div className="space-y-3">
+                <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+                    <input 
+                        type="checkbox"
+                        className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500"
+                        onChange={onToggleSelectAll}
+                        checked={expenses.length > 0 && selectedExpenses.length === expenses.length}
+                    />
+                    <div className="flex-1"></div>
+                </div>
+
+                {expenses.map(expense => (
+                    <div key={expense.id} className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors">
+                        <input
+                            type="checkbox"
+                            className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500"
+                            checked={selectedExpenses.includes(expense.id)}
+                            onChange={() => onToggleSelect(expense.id)}
+                        />
+                        <div className="flex items-center gap-4 flex-grow ml-4">
+                            <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${expense.card === 'card1' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400' : 'bg-green-100 text-green-600 dark:bg-green-900/50 dark:text-green-400'}`}>
+                                <CreditCardIcon />
+                            </div>
+                            <div>
+                                <p className="font-bold text-lg">₹{parseFloat(expense.amount).toFixed(2)}</p>
+                                <p className="text-sm text-gray-600 dark:text-gray-300">{expense.description || 'No description'}</p>
+                                <p className="text-xs text-gray-400 dark:text-gray-500">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => onEdit(expense)} className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 rounded-full transition-colors"><PencilIcon /></button>
+                            <button onClick={() => onDelete(expense)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 rounded-full transition-colors"><TrashIcon /></button>
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 };
 
-const RecycleBin = ({ bin, onRestore, onDelete, cardNames }) => {
+const RecycleBin = ({ bin, onRestore, onDelete, cardNames, selectedBinItems, onToggleSelect, onToggleSelectAll, onRestoreSelected, onDeleteSelected }) => {
     if (bin.length === 0) {
         return <p className="text-center text-gray-500 dark:text-gray-400 py-8">Recycle bin is empty.</p>;
     }
     const getCardName = (cardId) => cardId === 'card1' ? cardNames.card1 : cardNames.card2;
 
     return (
-        <div className="space-y-3">
-            {bin.map(expense => (
-                <div key={expense.id} className="flex items-center justify-between bg-red-50 dark:bg-red-900/20 p-3 rounded-lg">
-                    <div className="flex-1">
-                        <p className="font-bold">₹{parseFloat(expense.amount).toFixed(2)}</p>
-                        <p className="text-sm text-gray-600 dark:text-gray-300">{expense.description || 'No description'}</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-500">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                         <button onClick={() => onRestore(expense)} className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-green-900/50 rounded-full transition-colors"><UndoIcon /></button>
-                        <button onClick={() => onDelete(expense.id)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-red-900/50 rounded-full transition-colors"><XCircleIcon /></button>
+        <div>
+            {selectedBinItems.length > 0 && (
+                 <div className="flex items-center justify-between p-2 mb-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
+                    <span className="text-sm font-medium">{selectedBinItems.length} selected</span>
+                    <div className="flex gap-2">
+                        <button onClick={onRestoreSelected} className="bg-green-500 hover:bg-green-600 text-white font-bold py-1 px-3 rounded-lg text-sm">Restore</button>
+                        <button onClick={onDeleteSelected} className="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-lg text-sm">Delete Permanently</button>
                     </div>
                 </div>
-            ))}
+            )}
+             <div className="space-y-3">
+                 <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+                    <input 
+                        type="checkbox"
+                        className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500"
+                        onChange={onToggleSelectAll}
+                        checked={bin.length > 0 && selectedBinItems.length === bin.length}
+                    />
+                    <div className="flex-1"></div>
+                </div>
+
+                {bin.map(expense => (
+                    <div key={expense.id} className="flex items-center justify-between bg-red-50 dark:bg-red-900/20 p-3 rounded-lg">
+                        <input
+                            type="checkbox"
+                            className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500"
+                            checked={selectedBinItems.includes(expense.id)}
+                            onChange={() => onToggleSelect(expense.id)}
+                        />
+                        <div className="flex-1 ml-4">
+                            <p className="font-bold">₹{parseFloat(expense.amount).toFixed(2)}</p>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">{expense.description || 'No description'}</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                             <button onClick={() => onRestore(expense)} className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-green-900/50 rounded-full transition-colors"><UndoIcon /></button>
+                            <button onClick={() => onDelete(expense.id)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-red-900/50 rounded-full transition-colors"><XCircleIcon /></button>
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 };
