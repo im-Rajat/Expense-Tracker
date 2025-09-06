@@ -348,7 +348,7 @@ export default function App() {
         const batch = writeBatch(db);
         const expensesToMove = expenses.filter(exp => selectedExpenses.includes(exp.id));
         expensesToMove.forEach(expense => {
-            const expenseRef = doc(db, `users/${userId}/expenses`, expense.id);
+            const expenseRef = doc(db, `/users/${userId}/expenses`, expense.id);
             const binRef = doc(db, `users/${userId}/recycleBin`, expense.id);
             batch.set(binRef, expense);
             batch.delete(expenseRef);
