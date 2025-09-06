@@ -3,10 +3,6 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, serverTimestamp } from 'firebase/firestore';
 
-// --- Helper Functions & Constants ---
-const CARD_1_NAME = 'ICICI Amazon Pay';
-const CARD_2_NAME = 'ICICI Coral RuPay';
-
 // --- Main App Component ---
 export default function App() {
     // --- State Management ---
@@ -17,6 +13,8 @@ export default function App() {
     const [currentView, setCurrentView] = useState('expenses'); // 'expenses' or 'bin'
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
+    const [cardNames, setCardNames] = useState({ card1: 'Card 1', card2: 'Card 2' });
+    const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
     // Firebase state
     const [db, setDb] = useState(null);
@@ -75,6 +73,21 @@ export default function App() {
 
         setIsLoading(true);
 
+        // Fetch card names
+        const settingsRef = doc(db, `users/${userId}/settings/cardConfig`);
+        const unsubscribeSettings = onSnapshot(settingsRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setCardNames(docSnap.data());
+            } else {
+                const defaultNames = { card1: 'ICICI Amazon Pay', card2: 'ICICI Coral RuPay' };
+                setDoc(settingsRef, defaultNames).catch(e => console.error("Could not create default card names", e));
+                setCardNames(defaultNames);
+            }
+        }, (err) => {
+            console.error("Error fetching card names:", err);
+            setError("Could not fetch card settings.");
+        });
+
         // Fetch active expenses
         const expensesPath = `users/${userId}/expenses`;
         const qExpenses = query(collection(db, expensesPath));
@@ -105,6 +118,7 @@ export default function App() {
         return () => {
             unsubscribeExpenses();
             unsubscribeRecycleBin();
+            unsubscribeSettings();
         };
     }, [isAuthReady, db, userId]);
 
@@ -176,6 +190,18 @@ export default function App() {
             setError("Failed to update expense.");
         }
     };
+    
+    const handleUpdateCardNames = async (newNames) => {
+        if (!db || !userId) return;
+        const settingsRef = doc(db, `users/${userId}/settings/cardConfig`);
+        try {
+            await setDoc(settingsRef, newNames, { merge: true });
+            setIsSettingsModalOpen(false);
+        } catch (e) {
+            console.error("Error updating card names: ", e);
+            setError("Failed to update card names.");
+        }
+    };
 
     const handleDeleteExpense = async (expense) => {
         if (!db || !userId) return;
@@ -230,17 +256,17 @@ export default function App() {
     // --- Calculated Totals ---
     const totals = useMemo(() => {
         const card1Total = expenses
-            .filter(e => e.card === CARD_1_NAME)
+            .filter(e => e.card === 'card1')
             .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
         const card2Total = expenses
-            .filter(e => e.card === CARD_2_NAME)
+            .filter(e => e.card === 'card2')
             .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
         return {
-            [CARD_1_NAME]: card1Total,
-            [CARD_2_NAME]: card2Total,
+            [cardNames.card1]: card1Total,
+            [cardNames.card2]: card2Total,
             total: card1Total + card2Total,
         };
-    }, [expenses]);
+    }, [expenses, cardNames]);
 
     // --- Render Logic ---
     if (!isAuthReady) {
@@ -258,9 +284,9 @@ export default function App() {
     return (
         <div className="bg-gray-100 min-h-screen font-sans text-gray-800 p-4 sm:p-6 lg:p-8">
             <div className="max-w-4xl mx-auto">
-                <Header userId={userId} onLogout={handleLogout} />
+                <Header userId={userId} onLogout={handleLogout} onOpenSettings={() => setIsSettingsModalOpen(true)} />
                 <main>
-                    <SummaryCards totals={totals} />
+                    <SummaryCards totals={totals} cardNames={cardNames} />
                     <NavBar currentView={currentView} setCurrentView={setCurrentView} onAddNew={() => openModal()} />
                     
                     {error && <p className="text-red-500 bg-red-100 p-3 rounded-lg my-4 text-center">{error}</p>}
@@ -272,9 +298,9 @@ export default function App() {
                     ) : (
                         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mt-4">
                             {currentView === 'expenses' ? (
-                                <ExpenseList expenses={expenses} onEdit={openModal} onDelete={handleDeleteExpense} />
+                                <ExpenseList expenses={expenses} onEdit={openModal} onDelete={handleDeleteExpense} cardNames={cardNames} />
                             ) : (
-                                <RecycleBin bin={recycleBin} onRestore={handleRestoreExpense} onDelete={handlePermanentDelete} />
+                                <RecycleBin bin={recycleBin} onRestore={handleRestoreExpense} onDelete={handlePermanentDelete} cardNames={cardNames} />
                             )}
                         </div>
                     )}
@@ -286,8 +312,15 @@ export default function App() {
                     onClose={closeModal}
                     onSave={editingExpense ? handleUpdateExpense : handleAddExpense}
                     expense={editingExpense}
+                    cardNames={cardNames}
                 />
             )}
+            <SettingsModal
+                isOpen={isSettingsModalOpen}
+                onClose={() => setIsSettingsModalOpen(false)}
+                onSave={handleUpdateCardNames}
+                currentNames={cardNames}
+            />
         </div>
     );
 }
@@ -364,30 +397,34 @@ const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error }) => {
     );
 };
 
-const Header = ({ userId, onLogout }) => (
+const Header = ({ userId, onLogout, onOpenSettings }) => (
     <header className="mb-6">
-        <div className="flex justify-between items-start">
-            <div className="text-center flex-1">
+        <div className="flex justify-between items-center">
+             <button onClick={onOpenSettings} className="bg-gray-200 hover:bg-gray-300 text-gray-700 p-2 rounded-full transition-colors" title="Edit Card Names">
+                <SettingsIcon />
+            </button>
+            <div className="text-center">
                  <h1 className="text-4xl font-bold text-indigo-600">Expense Tracker</h1>
                  <p className="text-gray-500 mt-1">Log and manage your credit card expenses with ease.</p>
                  {userId && <p className="text-xs text-gray-400 mt-2 break-all">User ID: {userId}</p>}
             </div>
-            <button onClick={onLogout} className="ml-4 bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-3 rounded-lg text-sm transition-colors">
+            <button onClick={onLogout} className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-3 rounded-lg text-sm transition-colors">
                 Logout
             </button>
         </div>
     </header>
 );
 
-const SummaryCards = ({ totals }) => (
+
+const SummaryCards = ({ totals, cardNames }) => (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white p-4 rounded-xl shadow-md border border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-500">{CARD_1_NAME}</h3>
-            <p className="text-2xl font-bold text-blue-600">₹{totals[CARD_1_NAME].toFixed(2)}</p>
+            <h3 className="text-sm font-semibold text-gray-500 truncate">{cardNames.card1}</h3>
+            <p className="text-2xl font-bold text-blue-600">₹{totals[cardNames.card1]?.toFixed(2) || '0.00'}</p>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-md border border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-500">{CARD_2_NAME}</h3>
-            <p className="text-2xl font-bold text-green-600">₹{totals[CARD_2_NAME].toFixed(2)}</p>
+            <h3 className="text-sm font-semibold text-gray-500 truncate">{cardNames.card2}</h3>
+            <p className="text-2xl font-bold text-green-600">₹{totals[cardNames.card2]?.toFixed(2) || '0.00'}</p>
         </div>
         <div className="bg-indigo-600 text-white p-4 rounded-xl shadow-md">
             <h3 className="text-sm font-semibold text-indigo-200">Total Expenses</h3>
@@ -412,22 +449,24 @@ const NavBar = ({ currentView, setCurrentView, onAddNew }) => (
     </div>
 );
 
-const ExpenseList = ({ expenses, onEdit, onDelete }) => {
+const ExpenseList = ({ expenses, onEdit, onDelete, cardNames }) => {
     if (expenses.length === 0) {
         return <p className="text-center text-gray-500 py-8">No expenses yet. Add one to get started!</p>;
     }
+    const getCardName = (cardId) => cardId === 'card1' ? cardNames.card1 : cardNames.card2;
+    
     return (
         <div className="space-y-3">
             {expenses.map(expense => (
                 <div key={expense.id} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg hover:bg-gray-100 transition-colors">
                     <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${expense.card === CARD_1_NAME ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
+                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${expense.card === 'card1' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
                             <CreditCardIcon />
                         </div>
                         <div>
                             <p className="font-bold text-lg">₹{parseFloat(expense.amount).toFixed(2)}</p>
                             <p className="text-sm text-gray-600">{expense.description || 'No description'}</p>
-                            <p className="text-xs text-gray-400">{new Date(expense.date).toLocaleDateString()} &bull; {expense.card}</p>
+                            <p className="text-xs text-gray-400">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -440,10 +479,12 @@ const ExpenseList = ({ expenses, onEdit, onDelete }) => {
     );
 };
 
-const RecycleBin = ({ bin, onRestore, onDelete }) => {
+const RecycleBin = ({ bin, onRestore, onDelete, cardNames }) => {
     if (bin.length === 0) {
         return <p className="text-center text-gray-500 py-8">Recycle bin is empty.</p>;
     }
+    const getCardName = (cardId) => cardId === 'card1' ? cardNames.card1 : cardNames.card2;
+
     return (
         <div className="space-y-3">
             {bin.map(expense => (
@@ -451,7 +492,7 @@ const RecycleBin = ({ bin, onRestore, onDelete }) => {
                     <div className="flex-1">
                         <p className="font-bold">₹{parseFloat(expense.amount).toFixed(2)}</p>
                         <p className="text-sm text-gray-600">{expense.description || 'No description'}</p>
-                        <p className="text-xs text-gray-400">{new Date(expense.date).toLocaleDateString()} &bull; {expense.card}</p>
+                        <p className="text-xs text-gray-400">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
                     </div>
                     <div className="flex items-center gap-2">
                          <button onClick={() => onRestore(expense)} className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-100 rounded-full transition-colors"><UndoIcon /></button>
@@ -463,12 +504,12 @@ const RecycleBin = ({ bin, onRestore, onDelete }) => {
     );
 };
 
-const ExpenseModal = ({ isOpen, onClose, onSave, expense }) => {
+const ExpenseModal = ({ isOpen, onClose, onSave, expense, cardNames }) => {
     const [formData, setFormData] = useState({
         amount: '',
         date: new Date().toISOString().split('T')[0],
         description: '',
-        card: CARD_1_NAME
+        card: 'card1'
     });
 
     useEffect(() => {
@@ -485,7 +526,7 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense }) => {
                 amount: '',
                 date: new Date().toISOString().split('T')[0],
                 description: '',
-                card: CARD_1_NAME
+                card: 'card1'
             });
         }
     }, [expense]);
@@ -532,13 +573,13 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense }) => {
                         <div>
                              <label className="block text-sm font-medium text-gray-700 mb-2">Card</label>
                              <div className="flex gap-4">
-                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === CARD_1_NAME ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}>
-                                     <input type="radio" name="card" value={CARD_1_NAME} checked={formData.card === CARD_1_NAME} onChange={handleChange} className="sr-only" />
-                                     <span className="font-semibold text-sm">{CARD_1_NAME}</span>
+                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === 'card1' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}>
+                                     <input type="radio" name="card" value="card1" checked={formData.card === 'card1'} onChange={handleChange} className="sr-only" />
+                                     <span className="font-semibold text-sm">{cardNames.card1}</span>
                                  </label>
-                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === CARD_2_NAME ? 'border-green-500 bg-green-50' : 'border-gray-300'}`}>
-                                     <input type="radio" name="card" value={CARD_2_NAME} checked={formData.card === CARD_2_NAME} onChange={handleChange} className="sr-only" />
-                                     <span className="font-semibold text-sm">{CARD_2_NAME}</span>
+                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === 'card2' ? 'border-green-500 bg-green-50' : 'border-gray-300'}`}>
+                                     <input type="radio" name="card" value="card2" checked={formData.card === 'card2'} onChange={handleChange} className="sr-only" />
+                                     <span className="font-semibold text-sm">{cardNames.card2}</span>
                                  </label>
                              </div>
                         </div>
@@ -553,6 +594,53 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense }) => {
     );
 };
 
+const SettingsModal = ({ isOpen, onClose, onSave, currentNames }) => {
+    const [names, setNames] = useState(currentNames);
+
+    useEffect(() => {
+        setNames(currentNames);
+    }, [currentNames]);
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setNames(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        onSave(names);
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+                <form onSubmit={handleSubmit}>
+                    <div className="p-6">
+                        <h2 className="text-2xl font-bold mb-4">Edit Card Names</h2>
+                        <div className="mb-4">
+                            <label htmlFor="card1" className="block text-sm font-medium text-gray-700 mb-1">Card 1 Name</label>
+                            <input type="text" name="card1" id="card1" value={names.card1} onChange={handleChange}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
+                        </div>
+                        <div className="mb-4">
+                            <label htmlFor="card2" className="block text-sm font-medium text-gray-700 mb-1">Card 2 Name</label>
+                            <input type="text" name="card2" id="card2" value={names.card2} onChange={handleChange}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
+                        </div>
+                    </div>
+                    <div className="bg-gray-50 px-6 py-3 flex justify-end gap-3 rounded-b-xl">
+                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Cancel</button>
+                        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+
 // --- SVG Icons ---
 const PlusIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>);
 const CreditCardIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>);
@@ -560,3 +648,4 @@ const PencilIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" hei
 const TrashIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>);
 const UndoIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"></path><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path></svg>);
 const XCircleIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>);
+const SettingsIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>);
