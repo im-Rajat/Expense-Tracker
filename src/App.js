@@ -18,6 +18,7 @@ export default function App() {
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
     const [selectedExpenses, setSelectedExpenses] = useState([]);
     const [selectedBinItems, setSelectedBinItems] = useState([]);
+    const [filterCard, setFilterCard] = useState('all'); // 'all', 'card1', or 'card2'
 
 
     // Firebase state
@@ -87,7 +88,6 @@ export default function App() {
     // --- Firestore Data Fetching ---
     useEffect(() => {
         if (!isAuthReady || !db || !userId) {
-            // If user logs out, we should not proceed.
             if (!userId) setIsLoading(false);
             return;
         }
@@ -108,8 +108,8 @@ export default function App() {
             console.error("Error fetching card names:", err);
             setError("Could not fetch card settings.");
         });
-
-        // Fetch active expenses
+        
+        // Fetch all active expenses, sorted by date
         const expensesPath = `users/${userId}/expenses`;
         const qExpenses = query(collection(db, expensesPath), orderBy('date', 'desc'));
         const unsubscribeExpenses = onSnapshot(qExpenses, (querySnapshot) => {
@@ -122,7 +122,7 @@ export default function App() {
             setIsLoading(false);
         });
 
-        // Fetch recycled expenses
+        // Fetch all recycled expenses, sorted by date
         const recycleBinPath = `users/${userId}/recycleBin`;
         const qRecycleBin = query(collection(db, recycleBinPath), orderBy('date', 'desc'));
         const unsubscribeRecycleBin = onSnapshot(qRecycleBin, (querySnapshot) => {
@@ -140,6 +140,21 @@ export default function App() {
         };
     }, [isAuthReady, db, userId]);
 
+    // --- Client-side Filtering ---
+    const filteredExpenses = useMemo(() => {
+        if (filterCard === 'all') {
+            return expenses;
+        }
+        return expenses.filter(expense => expense.card === filterCard);
+    }, [expenses, filterCard]);
+
+    const filteredRecycleBin = useMemo(() => {
+        if (filterCard === 'all') {
+            return recycleBin;
+        }
+        return recycleBin.filter(item => item.card === filterCard);
+    }, [recycleBin, filterCard]);
+
     // --- Selection Handlers ---
     const handleToggleSelect = (expenseId, view) => {
         const setSelection = view === 'expenses' ? setSelectedExpenses : setSelectedBinItems;
@@ -151,7 +166,7 @@ export default function App() {
     };
 
     const handleToggleSelectAll = (view) => {
-        const sourceList = view === 'expenses' ? expenses : recycleBin;
+        const sourceList = view === 'expenses' ? filteredExpenses : filteredRecycleBin;
         const selectedList = view === 'expenses' ? selectedExpenses : selectedBinItems;
         const setSelection = view === 'expenses' ? setSelectedExpenses : setSelectedBinItems;
 
@@ -399,7 +414,14 @@ export default function App() {
                 />
                 <main className="flex flex-col flex-grow min-h-0">
                     <SummaryCards totals={totals} cardNames={cardNames} />
-                    <NavBar currentView={currentView} setCurrentView={setCurrentView} onAddNew={() => openModal()} />
+                    <NavBar 
+                        currentView={currentView} 
+                        setCurrentView={setCurrentView} 
+                        onAddNew={() => openModal()}
+                        filterCard={filterCard}
+                        onFilterChange={setFilterCard}
+                        cardNames={cardNames}
+                    />
                     
                     {error && <p className="text-red-500 bg-red-100 dark:bg-red-900/20 dark:text-red-400 p-3 rounded-lg my-4 text-center">{error}</p>}
                     
@@ -412,7 +434,7 @@ export default function App() {
                             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 sm:p-6">
                                 {currentView === 'expenses' ? (
                                     <ExpenseList 
-                                        expenses={expenses} 
+                                        expenses={filteredExpenses} 
                                         onEdit={openModal} 
                                         onDelete={handleDeleteExpense} 
                                         cardNames={cardNames}
@@ -423,7 +445,7 @@ export default function App() {
                                     />
                                 ) : (
                                     <RecycleBin 
-                                        bin={recycleBin} 
+                                        bin={filteredRecycleBin} 
                                         onRestore={handleRestoreExpense} 
                                         onDelete={handlePermanentDelete} 
                                         cardNames={cardNames}
@@ -571,8 +593,8 @@ const SummaryCards = ({ totals, cardNames }) => (
     </div>
 );
 
-const NavBar = ({ currentView, setCurrentView, onAddNew }) => (
-    <div className="flex flex-col sm:flex-row items-center justify-between bg-white dark:bg-gray-800 p-2 rounded-xl shadow-md mb-4 gap-2">
+const NavBar = ({ currentView, setCurrentView, onAddNew, filterCard, onFilterChange, cardNames }) => (
+    <div className="flex flex-col sm:flex-row items-center justify-between bg-white dark:bg-gray-800 p-2 rounded-xl shadow-md gap-2">
         <div className="flex bg-gray-200 dark:bg-gray-700 p-1 rounded-lg">
             <button onClick={() => setCurrentView('expenses')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'expenses' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
                 Active Expenses
@@ -581,6 +603,19 @@ const NavBar = ({ currentView, setCurrentView, onAddNew }) => (
                 Recycle Bin
             </button>
         </div>
+
+        <div className="flex bg-gray-200 dark:bg-gray-700 p-1 rounded-lg">
+            <button onClick={() => onFilterChange('all')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${filterCard === 'all' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
+                All
+            </button>
+            <button onClick={() => onFilterChange('card1')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors truncate ${filterCard === 'card1' ? 'bg-blue-500 dark:bg-blue-600 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
+                {cardNames.card1}
+            </button>
+            <button onClick={() => onFilterChange('card2')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors truncate ${filterCard === 'card2' ? 'bg-green-500 dark:bg-green-600 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
+                {cardNames.card2}
+            </button>
+        </div>
+        
         <button onClick={onAddNew} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-transform transform hover:scale-105">
             <PlusIcon /> Add New Expense
         </button>
