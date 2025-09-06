@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, EmailAuthProvider, reauthenticateWithCredential, updateEmail } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, EmailAuthProvider, reauthenticateWithCredential, updateEmail, linkWithCredential } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, setDoc, getDoc, deleteDoc, onSnapshot, query, serverTimestamp, orderBy, writeBatch } from 'firebase/firestore';
 
 // --- Main App Component ---
@@ -89,53 +89,57 @@ export default function App() {
             if (!userId) setIsLoading(false);
             return;
         }
-
+    
         setIsLoading(true);
-
+    
+        const unsubscribes = [];
+    
         // Fetch card names
         const settingsRef = doc(db, `users/${userId}/settings/cardConfig`);
-        const unsubscribeSettings = onSnapshot(settingsRef, (docSnap) => {
+        unsubscribes.push(onSnapshot(settingsRef, (docSnap) => {
             if (docSnap.exists()) {
                 setCardNames(docSnap.data());
             } else {
                 const defaultNames = { card1: 'ICICI Amazon Pay', card2: 'ICICI Coral RuPay' };
-                if (!auth.currentUser.isAnonymous) {
+                if (auth.currentUser && !auth.currentUser.isAnonymous) {
                   setDoc(settingsRef, defaultNames).catch(e => console.error("Could not create default card names", e));
                 }
                 setCardNames(defaultNames);
             }
-        });
-
+        }));
+    
         // Fetch user profile (for customUserId)
-        const profileRef = doc(db, `users/${userId}/settings/profile`);
-        const unsubscribeProfile = onSnapshot(profileRef, (docSnap) => {
-            if (docSnap.exists()) {
-                setCustomUserId(docSnap.data().customUserId);
-            }
-        });
+        if (auth.currentUser && !auth.currentUser.isAnonymous) {
+            const profileRef = doc(db, `users/${userId}/settings/profile`);
+            unsubscribes.push(onSnapshot(profileRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    setCustomUserId(docSnap.data().customUserId);
+                }
+            }));
+        } else {
+            setCustomUserId('Guest');
+        }
         
         // Fetch all active expenses, sorted by date
         const expensesPath = `users/${userId}/expenses`;
         const qExpenses = query(collection(db, expensesPath), orderBy('date', 'desc'));
-        const unsubscribeExpenses = onSnapshot(qExpenses, (querySnapshot) => {
+        unsubscribes.push(onSnapshot(qExpenses, (querySnapshot) => {
             const expensesData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setExpenses(expensesData);
             setIsLoading(false);
-        });
-
+        }));
+    
         // Fetch all recycled expenses, sorted by date
         const recycleBinPath = `users/${userId}/recycleBin`;
         const qRecycleBin = query(collection(db, recycleBinPath), orderBy('date', 'desc'));
-        const unsubscribeRecycleBin = onSnapshot(qRecycleBin, (querySnapshot) => {
+        unsubscribes.push(onSnapshot(qRecycleBin, (querySnapshot) => {
             const binData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setRecycleBin(binData);
-        });
-
+        }));
+    
+        // Cleanup all subscriptions on component unmount
         return () => {
-            unsubscribeExpenses();
-            unsubscribeRecycleBin();
-            unsubscribeSettings();
-            unsubscribeProfile();
+            unsubscribes.forEach(unsub => unsub());
         };
     }, [isAuthReady, db, userId, auth]);
 
@@ -183,19 +187,41 @@ export default function App() {
         }
 
         const email = `${lowerCaseId}@expense-tracker.app`;
-        try {
-            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-            const user = userCredential.user;
 
-            const batch = writeBatch(db);
-            batch.set(usernameDocRef, { uid: user.uid, email: email });
-            const profileDocRef = doc(db, `users/${user.uid}/settings/profile`);
-            batch.set(profileDocRef, { customUserId: customId });
-            await batch.commit();
+        // If the current user is anonymous, link the new credentials
+        if (auth.currentUser && auth.currentUser.isAnonymous) {
+            try {
+                const credential = EmailAuthProvider.credential(email, password);
+                const userCredential = await linkWithCredential(auth.currentUser, credential);
+                const user = userCredential.user;
 
-        } catch (err) {
-            setError(err.message);
-            console.error("Sign up error:", err);
+                const batch = writeBatch(db);
+                batch.set(usernameDocRef, { uid: user.uid, email: email });
+                const profileDocRef = doc(db, `users/${user.uid}/settings/profile`);
+                batch.set(profileDocRef, { customUserId: customId });
+                await batch.commit();
+
+                setIsSettingsModalOpen(false); // Close modal on success
+            } catch (err) {
+                 setError(err.message);
+                 console.error("Error linking anonymous account:", err);
+            }
+        } else {
+            // Otherwise, create a new user
+            try {
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+
+                const batch = writeBatch(db);
+                batch.set(usernameDocRef, { uid: user.uid, email: email });
+                const profileDocRef = doc(db, `users/${user.uid}/settings/profile`);
+                batch.set(profileDocRef, { customUserId: customId });
+                await batch.commit();
+
+            } catch (err) {
+                setError(err.message);
+                console.error("Sign up error:", err);
+            }
         }
     };
 
@@ -456,6 +482,7 @@ export default function App() {
                     onOpenSettings={() => setIsSettingsModalOpen(true)}
                     onToggleTheme={toggleTheme}
                     theme={theme}
+                    isAnonymous={auth.currentUser?.isAnonymous}
                 />
                 <main className="flex flex-col flex-grow min-h-0">
                     <SummaryCards totals={totals} cardNames={cardNames} />
@@ -475,7 +502,7 @@ export default function App() {
                 </main>
             </div>
             {isModalOpen && <ExpenseModal isOpen={isModalOpen} onClose={closeModal} onSave={editingExpense ? handleUpdateExpense : handleAddExpense} expense={editingExpense} cardNames={cardNames} />}
-            {isSettingsModalOpen && <SettingsModal isOpen={isSettingsModalOpen} onClose={() => { setIsSettingsModalOpen(false); setError(''); }} onSaveUserId={handleUpdateUserId} onSaveCardNames={handleUpdateCardNames} currentNames={cardNames} currentUserId={customUserId} error={error} />}
+            {isSettingsModalOpen && <SettingsModal isOpen={isSettingsModalOpen} onClose={() => { setIsSettingsModalOpen(false); setError(''); }} onSaveUserId={handleUpdateUserId} onSaveCardNames={handleUpdateCardNames} onSignUp={handleSignUp} currentNames={cardNames} currentUserId={customUserId} error={error} isAnonymous={auth.currentUser?.isAnonymous} />}
         </div>
     );
 }
@@ -531,7 +558,7 @@ const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error, setError }) => {
     );
 };
 
-const Header = ({ customUserId, onLogout, onOpenSettings, onToggleTheme, theme }) => (
+const Header = ({ customUserId, onLogout, onOpenSettings, onToggleTheme, theme, isAnonymous }) => (
     <header className="mb-6">
         <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
@@ -544,7 +571,10 @@ const Header = ({ customUserId, onLogout, onOpenSettings, onToggleTheme, theme }
             </div>
             <div className="text-center">
                  <h1 className="text-4xl font-bold text-indigo-600 dark:text-indigo-400">Expense Tracker</h1>
-                 <p className="text-gray-500 dark:text-gray-400 mt-1">Welcome, <span className="font-semibold">{customUserId || 'Guest'}</span></p>
+                 <p className="text-gray-500 dark:text-gray-400 mt-1">Log and manage your credit card expenses with ease.</p>
+                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    {isAnonymous ? "Welcome, Guest" : `Welcome, ${customUserId}`}
+                 </p>
             </div>
             <button onClick={onLogout} className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-3 rounded-lg text-sm transition-colors">
                 Logout
@@ -754,7 +784,7 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense, cardNames }) => {
     );
 };
 
-const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, currentNames, currentUserId, error }) => {
+const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignUp, currentNames, currentUserId, error, isAnonymous }) => {
     const [activeTab, setActiveTab] = useState('profile');
     
     // State for card names form
@@ -767,8 +797,12 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, current
 
     useEffect(() => {
         setCardNames(currentNames);
-        setNewCustomUserId(currentUserId);
-    }, [currentNames, currentUserId]);
+        if(!isAnonymous) {
+            setNewCustomUserId(currentUserId);
+        } else {
+            setNewCustomUserId('');
+        }
+    }, [currentNames, currentUserId, isAnonymous]);
     
     useEffect(() => {
         setCardNamesChanged(JSON.stringify(currentNames) !== JSON.stringify(cardNames));
@@ -779,10 +813,19 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, current
     
     const handleUserIdSubmit = (e) => {
         e.preventDefault();
-        onSaveUserId(newCustomUserId, password);
+        if(isAnonymous) {
+            onSignUp(newCustomUserId, password);
+        } else {
+            onSaveUserId(newCustomUserId, password);
+        }
     };
 
     if (!isOpen) return null;
+    
+    const profileTitle = isAnonymous ? "Create Your Profile" : "Profile Settings";
+    const profileDescription = isAnonymous 
+        ? "Create a permanent profile with a User ID and password to save your expenses across devices."
+        : "Change your unique User ID. You will need to enter your current password to confirm this change.";
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -792,11 +835,13 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, current
                     <div className="border-b border-gray-200 dark:border-gray-700 mb-4">
                         <nav className="-mb-px flex space-x-4" aria-label="Tabs">
                             <button onClick={() => setActiveTab('profile')} className={`${activeTab === 'profile' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}>
-                                Profile
+                               {profileTitle}
                             </button>
-                            <button onClick={() => setActiveTab('cards')} className={`${activeTab === 'cards' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}>
-                                Cards
-                            </button>
+                            {!isAnonymous && (
+                                <button onClick={() => setActiveTab('cards')} className={`${activeTab === 'cards' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}>
+                                    Cards
+                                </button>
+                            )}
                         </nav>
                     </div>
 
@@ -804,23 +849,25 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, current
 
                     {activeTab === 'profile' && (
                         <form onSubmit={handleUserIdSubmit}>
-                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Change your unique User ID. You will need to enter your current password to confirm this change.</p>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{profileDescription}</p>
                             <div className="mb-4">
-                                <label htmlFor="newCustomUserId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New User ID</label>
+                                <label htmlFor="newCustomUserId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">User ID</label>
                                 <input type="text" id="newCustomUserId" value={newCustomUserId} onChange={(e) => setNewCustomUserId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
                             </div>
                             <div className="mb-4">
-                                <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Current Password</label>
+                                <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{isAnonymous ? 'Password' : 'Current Password'}</label>
                                 <input type="password" id="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
                             </div>
                              <div className="bg-gray-50 dark:bg-gray-700/50 -mx-6 -mb-6 px-6 py-3 flex justify-end gap-3 rounded-b-xl mt-6">
                                 <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">Cancel</button>
-                                <button type="submit" disabled={newCustomUserId === currentUserId} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:hover:bg-indigo-600">Update User ID</button>
+                                <button type="submit" disabled={!isAnonymous && newCustomUserId === currentUserId} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:hover:bg-indigo-600">
+                                    {isAnonymous ? 'Create Account' : 'Update User ID'}
+                                </button>
                             </div>
                         </form>
                     )}
 
-                    {activeTab === 'cards' && (
+                    {activeTab === 'cards' && !isAnonymous && (
                         <form onSubmit={handleCardNamesSubmit}>
                              <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Edit the names of your credit cards. These names will be used throughout the app.</p>
                             <div className="mb-4">
