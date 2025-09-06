@@ -25,16 +25,19 @@ export default function App() {
     // --- Firebase Initialization and Auth ---
     useEffect(() => {
         try {
-            // PASTE YOUR FIREBASE CONFIG OBJECT HERE
+            // Your Firebase configuration object.
+            // For security, these values are stored in a .env.local file
+            // and accessed via process.env.
             const firebaseConfig = {
-              apiKey: "AIzaSyDiT3rCcLnrKy7R2-S61xv7eF4Q3JFUCv4",
-              authDomain: "expense-tracker-by-rk.firebaseapp.com",
-              projectId: "expense-tracker-by-rk",
-              storageBucket: "expense-tracker-by-rk.firebasestorage.app",
-              messagingSenderId: "208150166956",
-              appId: "1:208150166956:web:fee677079d5feb2148ce09",
-              measurementId: "G-57LLVKQZEH"
+              apiKey: process.env.REACT_APP_API_KEY,
+              authDomain: process.env.REACT_APP_AUTH_DOMAIN,
+              projectId: process.env.REACT_APP_PROJECT_ID,
+              storageBucket: process.env.REACT_APP_STORAGE_BUCKET,
+              messagingSenderId: process.env.REACT_APP_MESSAGING_SENDER_ID,
+              appId: process.env.REACT_APP_APP_ID,
+              measurementId: process.env.REACT_APP_MEASUREMENT_ID
             };
+
 
             const app = initializeApp(firebaseConfig);
             const authInstance = getAuth(app);
