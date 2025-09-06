@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, serverTimestamp, orderBy } from 'firebase/firestore';
 
 // --- Main App Component ---
 export default function App() {
@@ -108,11 +108,9 @@ export default function App() {
 
         // Fetch active expenses
         const expensesPath = `users/${userId}/expenses`;
-        const qExpenses = query(collection(db, expensesPath));
+        const qExpenses = query(collection(db, expensesPath), orderBy('date', 'desc'));
         const unsubscribeExpenses = onSnapshot(qExpenses, (querySnapshot) => {
             const expensesData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            // Sort by date in descending order (newest first)
-            expensesData.sort((a, b) => new Date(b.date) - new Date(a.date));
             setExpenses(expensesData);
             setIsLoading(false);
         }, (err) => {
@@ -123,10 +121,9 @@ export default function App() {
 
         // Fetch recycled expenses
         const recycleBinPath = `users/${userId}/recycleBin`;
-        const qRecycleBin = query(collection(db, recycleBinPath));
+        const qRecycleBin = query(collection(db, recycleBinPath), orderBy('date', 'desc'));
         const unsubscribeRecycleBin = onSnapshot(qRecycleBin, (querySnapshot) => {
             const binData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            binData.sort((a, b) => new Date(b.date) - new Date(a.date));
             setRecycleBin(binData);
         }, (err) => {
             console.error("Error fetching recycle bin:", err);
