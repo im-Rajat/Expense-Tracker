@@ -15,12 +15,27 @@ export default function App() {
     const [error, setError] = useState('');
     const [cardNames, setCardNames] = useState({ card1: 'Card 1', card2: 'Card 2' });
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+    const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
 
     // Firebase state
     const [db, setDb] = useState(null);
     const [auth, setAuth] = useState(null);
     const [userId, setUserId] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
+    
+    // --- Theme Management ---
+    useEffect(() => {
+        if (theme === 'dark') {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+        localStorage.setItem('theme', theme);
+    }, [theme]);
+
+    const toggleTheme = () => {
+        setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+    };
 
     // --- Firebase Initialization and Auth ---
     useEffect(() => {
@@ -274,8 +289,8 @@ export default function App() {
     // --- Render Logic ---
     if (!isAuthReady) {
         return (
-            <div className="bg-gray-100 min-h-screen flex items-center justify-center">
-                <p>Loading application...</p>
+            <div className="bg-gray-100 dark:bg-gray-900 min-h-screen flex items-center justify-center">
+                <p className="dark:text-white">Loading application...</p>
             </div>
         );
     }
@@ -285,21 +300,27 @@ export default function App() {
     }
 
     return (
-        <div className="bg-gray-100 min-h-screen font-sans text-gray-800 p-4 sm:p-6 lg:p-8">
+        <div className="bg-gray-100 dark:bg-gray-900 min-h-screen font-sans text-gray-800 dark:text-gray-100 p-4 sm:p-6 lg:p-8 transition-colors duration-300">
             <div className="max-w-4xl mx-auto">
-                <Header userId={userId} onLogout={handleLogout} onOpenSettings={() => setIsSettingsModalOpen(true)} />
+                <Header 
+                    userId={userId} 
+                    onLogout={handleLogout} 
+                    onOpenSettings={() => setIsSettingsModalOpen(true)}
+                    onToggleTheme={toggleTheme}
+                    theme={theme}
+                />
                 <main>
                     <SummaryCards totals={totals} cardNames={cardNames} />
                     <NavBar currentView={currentView} setCurrentView={setCurrentView} onAddNew={() => openModal()} />
                     
-                    {error && <p className="text-red-500 bg-red-100 p-3 rounded-lg my-4 text-center">{error}</p>}
+                    {error && <p className="text-red-500 bg-red-100 dark:bg-red-900/20 dark:text-red-400 p-3 rounded-lg my-4 text-center">{error}</p>}
                     
                     {isLoading ? (
                         <div className="text-center p-10">
                             <p>Loading your expenses...</p>
                         </div>
                     ) : (
-                        <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mt-4">
+                        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 sm:p-6 mt-4">
                             {currentView === 'expenses' ? (
                                 <ExpenseList expenses={expenses} onEdit={openModal} onDelete={handleDeleteExpense} cardNames={cardNames} />
                             ) : (
@@ -344,34 +365,34 @@ const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error }) => {
     };
 
     return (
-        <div className="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+        <div className="bg-gray-100 dark:bg-gray-900 min-h-screen flex flex-col items-center justify-center p-4">
             <div className="w-full max-w-sm">
                 <header className="mb-6 text-center">
-                    <h1 className="text-4xl font-bold text-indigo-600">Expense Tracker</h1>
-                    <p className="text-gray-500 mt-1">Sign in to continue</p>
+                    <h1 className="text-4xl font-bold text-indigo-600 dark:text-indigo-400">Expense Tracker</h1>
+                    <p className="text-gray-500 dark:text-gray-400 mt-1">Sign in to continue</p>
                 </header>
-                <div className="bg-white p-8 rounded-xl shadow-lg">
+                <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-lg">
                     <form onSubmit={(e) => handleSubmit(e, onLogin)}>
                         <div className="mb-4">
-                            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                            <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email Address</label>
                             <input
                                 type="email"
                                 id="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                                 placeholder="you@example.com"
                                 required
                             />
                         </div>
                         <div className="mb-6">
-                            <label htmlFor="password"className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                            <label htmlFor="password"className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
                             <input
                                 type="password"
                                 id="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                                 placeholder="••••••••"
                                 required
                             />
@@ -387,11 +408,11 @@ const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error }) => {
                         </div>
                     </form>
                     <div className="my-6 flex items-center">
-                        <div className="flex-grow border-t border-gray-300"></div>
-                        <span className="mx-4 text-sm text-gray-500">OR</span>
-                        <div className="flex-grow border-t border-gray-300"></div>
+                        <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
+                        <span className="mx-4 text-sm text-gray-500 dark:text-gray-400">OR</span>
+                        <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
                     </div>
-                    <button onClick={onAnonymous} className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg transition-colors">
+                    <button onClick={onAnonymous} className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 font-bold py-2 px-4 rounded-lg transition-colors">
                         Continue Anonymously
                     </button>
                 </div>
@@ -400,16 +421,21 @@ const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error }) => {
     );
 };
 
-const Header = ({ userId, onLogout, onOpenSettings }) => (
+const Header = ({ userId, onLogout, onOpenSettings, onToggleTheme, theme }) => (
     <header className="mb-6">
         <div className="flex justify-between items-center">
-             <button onClick={onOpenSettings} className="bg-gray-200 hover:bg-gray-300 text-gray-700 p-2 rounded-full transition-colors" title="Edit Card Names">
-                <SettingsIcon />
-            </button>
+            <div className="flex items-center gap-2">
+                 <button onClick={onOpenSettings} className="bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 p-2 rounded-full transition-colors" title="Edit Card Names">
+                    <SettingsIcon />
+                </button>
+                <button onClick={onToggleTheme} className="bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 p-2 rounded-full transition-colors" title="Toggle Theme">
+                    {theme === 'light' ? <MoonIcon /> : <SunIcon />}
+                </button>
+            </div>
             <div className="text-center">
-                 <h1 className="text-4xl font-bold text-indigo-600">Expense Tracker</h1>
-                 <p className="text-gray-500 mt-1">Log and manage your credit card expenses with ease.</p>
-                 {userId && <p className="text-xs text-gray-400 mt-2 break-all">User ID: {userId}</p>}
+                 <h1 className="text-4xl font-bold text-indigo-600 dark:text-indigo-400">Expense Tracker</h1>
+                 <p className="text-gray-500 dark:text-gray-400 mt-1">Log and manage your credit card expenses with ease.</p>
+                 {userId && <p className="text-xs text-gray-400 dark:text-gray-500 mt-2 break-all">User ID: {userId}</p>}
             </div>
             <button onClick={onLogout} className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-3 rounded-lg text-sm transition-colors">
                 Logout
@@ -421,32 +447,32 @@ const Header = ({ userId, onLogout, onOpenSettings }) => (
 
 const SummaryCards = ({ totals, cardNames }) => (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-xl shadow-md border border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-500 truncate">{cardNames.card1}</h3>
-            <p className="text-2xl font-bold text-blue-600">₹{totals[cardNames.card1]?.toFixed(2) || '0.00'}</p>
+        <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 truncate">{cardNames.card1}</h3>
+            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">₹{totals[cardNames.card1]?.toFixed(2) || '0.00'}</p>
         </div>
-        <div className="bg-white p-4 rounded-xl shadow-md border border-gray-200">
-            <h3 className="text-sm font-semibold text-gray-500 truncate">{cardNames.card2}</h3>
-            <p className="text-2xl font-bold text-green-600">₹{totals[cardNames.card2]?.toFixed(2) || '0.00'}</p>
+        <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
+            <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 truncate">{cardNames.card2}</h3>
+            <p className="text-2xl font-bold text-green-600 dark:text-green-400">₹{totals[cardNames.card2]?.toFixed(2) || '0.00'}</p>
         </div>
-        <div className="bg-indigo-600 text-white p-4 rounded-xl shadow-md">
-            <h3 className="text-sm font-semibold text-indigo-200">Total Expenses</h3>
+        <div className="bg-indigo-600 dark:bg-indigo-500 text-white p-4 rounded-xl shadow-md">
+            <h3 className="text-sm font-semibold text-indigo-200 dark:text-indigo-200">Total Expenses</h3>
             <p className="text-2xl font-bold">₹{totals.total.toFixed(2)}</p>
         </div>
     </div>
 );
 
 const NavBar = ({ currentView, setCurrentView, onAddNew }) => (
-    <div className="flex flex-col sm:flex-row items-center justify-between bg-white p-2 rounded-xl shadow-md mb-4 gap-2">
-        <div className="flex bg-gray-200 p-1 rounded-lg">
-            <button onClick={() => setCurrentView('expenses')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'expenses' ? 'bg-indigo-600 text-white shadow' : 'text-gray-600'}`}>
+    <div className="flex flex-col sm:flex-row items-center justify-between bg-white dark:bg-gray-800 p-2 rounded-xl shadow-md mb-4 gap-2">
+        <div className="flex bg-gray-200 dark:bg-gray-700 p-1 rounded-lg">
+            <button onClick={() => setCurrentView('expenses')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'expenses' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
                 Active Expenses
             </button>
-            <button onClick={() => setCurrentView('bin')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'bin' ? 'bg-indigo-600 text-white shadow' : 'text-gray-600'}`}>
+            <button onClick={() => setCurrentView('bin')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'bin' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
                 Recycle Bin
             </button>
         </div>
-        <button onClick={onAddNew} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-transform transform hover:scale-105">
+        <button onClick={onAddNew} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-transform transform hover:scale-105">
             <PlusIcon /> Add New Expense
         </button>
     </div>
@@ -454,27 +480,27 @@ const NavBar = ({ currentView, setCurrentView, onAddNew }) => (
 
 const ExpenseList = ({ expenses, onEdit, onDelete, cardNames }) => {
     if (expenses.length === 0) {
-        return <p className="text-center text-gray-500 py-8">No expenses yet. Add one to get started!</p>;
+        return <p className="text-center text-gray-500 dark:text-gray-400 py-8">No expenses yet. Add one to get started!</p>;
     }
     const getCardName = (cardId) => cardId === 'card1' ? cardNames.card1 : cardNames.card2;
     
     return (
         <div className="space-y-3">
             {expenses.map(expense => (
-                <div key={expense.id} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg hover:bg-gray-100 transition-colors">
+                <div key={expense.id} className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors">
                     <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${expense.card === 'card1' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
+                        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${expense.card === 'card1' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400' : 'bg-green-100 text-green-600 dark:bg-green-900/50 dark:text-green-400'}`}>
                             <CreditCardIcon />
                         </div>
                         <div>
                             <p className="font-bold text-lg">₹{parseFloat(expense.amount).toFixed(2)}</p>
-                            <p className="text-sm text-gray-600">{expense.description || 'No description'}</p>
-                            <p className="text-xs text-gray-400">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
+                            <p className="text-sm text-gray-600 dark:text-gray-300">{expense.description || 'No description'}</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        <button onClick={() => onEdit(expense)} className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-200 rounded-full transition-colors"><PencilIcon /></button>
-                        <button onClick={() => onDelete(expense)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-200 rounded-full transition-colors"><TrashIcon /></button>
+                        <button onClick={() => onEdit(expense)} className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 rounded-full transition-colors"><PencilIcon /></button>
+                        <button onClick={() => onDelete(expense)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 rounded-full transition-colors"><TrashIcon /></button>
                     </div>
                 </div>
             ))}
@@ -484,22 +510,22 @@ const ExpenseList = ({ expenses, onEdit, onDelete, cardNames }) => {
 
 const RecycleBin = ({ bin, onRestore, onDelete, cardNames }) => {
     if (bin.length === 0) {
-        return <p className="text-center text-gray-500 py-8">Recycle bin is empty.</p>;
+        return <p className="text-center text-gray-500 dark:text-gray-400 py-8">Recycle bin is empty.</p>;
     }
     const getCardName = (cardId) => cardId === 'card1' ? cardNames.card1 : cardNames.card2;
 
     return (
         <div className="space-y-3">
             {bin.map(expense => (
-                <div key={expense.id} className="flex items-center justify-between bg-red-50 p-3 rounded-lg">
+                <div key={expense.id} className="flex items-center justify-between bg-red-50 dark:bg-red-900/20 p-3 rounded-lg">
                     <div className="flex-1">
                         <p className="font-bold">₹{parseFloat(expense.amount).toFixed(2)}</p>
-                        <p className="text-sm text-gray-600">{expense.description || 'No description'}</p>
-                        <p className="text-xs text-gray-400">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
+                        <p className="text-sm text-gray-600 dark:text-gray-300">{expense.description || 'No description'}</p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500">{new Date(expense.date).toLocaleDateString()} &bull; {getCardName(expense.card)}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                         <button onClick={() => onRestore(expense)} className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-100 rounded-full transition-colors"><UndoIcon /></button>
-                        <button onClick={() => onDelete(expense.id)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-100 rounded-full transition-colors"><XCircleIcon /></button>
+                         <button onClick={() => onRestore(expense)} className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-green-900/50 rounded-full transition-colors"><UndoIcon /></button>
+                        <button onClick={() => onDelete(expense.id)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-red-900/50 rounded-full transition-colors"><XCircleIcon /></button>
                     </div>
                 </div>
             ))}
@@ -552,44 +578,44 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense, cardNames }) => {
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md">
                 <form onSubmit={handleSubmit}>
                     <div className="p-6">
-                        <h2 className="text-2xl font-bold mb-4">{expense ? 'Edit Expense' : 'Add New Expense'}</h2>
+                        <h2 className="text-2xl font-bold mb-4 dark:text-white">{expense ? 'Edit Expense' : 'Add New Expense'}</h2>
                         <div className="mb-4">
-                            <label htmlFor="amount" className="block text-sm font-medium text-gray-700 mb-1">Amount (₹)</label>
+                            <label htmlFor="amount" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount (₹)</label>
                             <input type="number" name="amount" id="amount" value={formData.amount} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                                 placeholder="0.00" step="0.01" required />
                         </div>
                         <div className="mb-4">
-                            <label htmlFor="date" className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                            <label htmlFor="date" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
                             <input type="date" name="date" id="date" value={formData.date} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
                         </div>
                         <div className="mb-4">
-                            <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
+                            <label htmlFor="description" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description (Optional)</label>
                             <input type="text" name="description" id="description" value={formData.description} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                                 placeholder="e.g., Coffee, Groceries" />
                         </div>
                         <div>
-                             <label className="block text-sm font-medium text-gray-700 mb-2">Card</label>
+                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Card</label>
                              <div className="flex gap-4">
-                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === 'card1' ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}>
+                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === 'card1' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/50 dark:border-blue-400' : 'border-gray-300 dark:border-gray-600'}`}>
                                      <input type="radio" name="card" value="card1" checked={formData.card === 'card1'} onChange={handleChange} className="sr-only" />
                                      <span className="font-semibold text-sm">{cardNames.card1}</span>
                                  </label>
-                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === 'card2' ? 'border-green-500 bg-green-50' : 'border-gray-300'}`}>
+                                 <label className={`flex-1 p-3 border rounded-lg cursor-pointer text-center ${formData.card === 'card2' ? 'border-green-500 bg-green-50 dark:bg-green-900/50 dark:border-green-400' : 'border-gray-300 dark:border-gray-600'}`}>
                                      <input type="radio" name="card" value="card2" checked={formData.card === 'card2'} onChange={handleChange} className="sr-only" />
                                      <span className="font-semibold text-sm">{cardNames.card2}</span>
                                  </label>
                              </div>
                         </div>
                     </div>
-                    <div className="bg-gray-50 px-6 py-3 flex justify-end gap-3 rounded-b-xl">
-                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Cancel</button>
-                        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">{expense ? 'Save Changes' : 'Add Expense'}</button>
+                    <div className="bg-gray-50 dark:bg-gray-700/50 px-6 py-3 flex justify-end gap-3 rounded-b-xl">
+                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">Cancel</button>
+                        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600">{expense ? 'Save Changes' : 'Add Expense'}</button>
                     </div>
                 </form>
             </div>
@@ -618,24 +644,24 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentNames }) => {
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md">
                 <form onSubmit={handleSubmit}>
                     <div className="p-6">
-                        <h2 className="text-2xl font-bold mb-4">Edit Card Names</h2>
+                        <h2 className="text-2xl font-bold mb-4 dark:text-white">Edit Card Names</h2>
                         <div className="mb-4">
-                            <label htmlFor="card1" className="block text-sm font-medium text-gray-700 mb-1">Card 1 Name</label>
+                            <label htmlFor="card1" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Card 1 Name</label>
                             <input type="text" name="card1" id="card1" value={names.card1} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
                         </div>
                         <div className="mb-4">
-                            <label htmlFor="card2" className="block text-sm font-medium text-gray-700 mb-1">Card 2 Name</label>
+                            <label htmlFor="card2" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Card 2 Name</label>
                             <input type="text" name="card2" id="card2" value={names.card2} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
+                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
                         </div>
                     </div>
-                    <div className="bg-gray-50 px-6 py-3 flex justify-end gap-3 rounded-b-xl">
-                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Cancel</button>
-                        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Save Changes</button>
+                    <div className="bg-gray-50 dark:bg-gray-700/50 px-6 py-3 flex justify-end gap-3 rounded-b-xl">
+                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">Cancel</button>
+                        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600">Save Changes</button>
                     </div>
                 </form>
             </div>
@@ -652,3 +678,5 @@ const TrashIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" heig
 const UndoIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"></path><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path></svg>);
 const XCircleIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>);
 const SettingsIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>);
+const MoonIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>;
+const SunIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>;
