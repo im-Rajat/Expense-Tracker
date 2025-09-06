@@ -388,8 +388,8 @@ export default function App() {
     }
 
     return (
-        <div className="bg-gray-100 dark:bg-gray-900 min-h-screen font-sans text-gray-800 dark:text-gray-100 p-4 sm:p-6 lg:p-8 transition-colors duration-300">
-            <div className="max-w-4xl mx-auto">
+        <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-300">
+            <div className="max-w-4xl mx-auto w-full flex flex-col p-4 sm:p-6 lg:p-8 min-h-0">
                 <Header 
                     userId={userId} 
                     onLogout={handleLogout} 
@@ -397,44 +397,46 @@ export default function App() {
                     onToggleTheme={toggleTheme}
                     theme={theme}
                 />
-                <main>
+                <main className="flex flex-col flex-grow min-h-0">
                     <SummaryCards totals={totals} cardNames={cardNames} />
                     <NavBar currentView={currentView} setCurrentView={setCurrentView} onAddNew={() => openModal()} />
                     
                     {error && <p className="text-red-500 bg-red-100 dark:bg-red-900/20 dark:text-red-400 p-3 rounded-lg my-4 text-center">{error}</p>}
                     
-                    {isLoading ? (
-                        <div className="text-center p-10">
-                            <p>Loading your expenses...</p>
-                        </div>
-                    ) : (
-                        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 sm:p-6 mt-4">
-                            {currentView === 'expenses' ? (
-                                <ExpenseList 
-                                    expenses={expenses} 
-                                    onEdit={openModal} 
-                                    onDelete={handleDeleteExpense} 
-                                    cardNames={cardNames}
-                                    selectedExpenses={selectedExpenses}
-                                    onToggleSelect={(id) => handleToggleSelect(id, 'expenses')}
-                                    onToggleSelectAll={() => handleToggleSelectAll('expenses')}
-                                    onDeleteSelected={handleDeleteSelected}
-                                />
-                            ) : (
-                                <RecycleBin 
-                                    bin={recycleBin} 
-                                    onRestore={handleRestoreExpense} 
-                                    onDelete={handlePermanentDelete} 
-                                    cardNames={cardNames}
-                                    selectedBinItems={selectedBinItems}
-                                    onToggleSelect={(id) => handleToggleSelect(id, 'bin')}
-                                    onToggleSelectAll={() => handleToggleSelectAll('bin')}
-                                    onRestoreSelected={handleRestoreSelected}
-                                    onDeleteSelected={handlePermanentDeleteSelected}
-                                />
-                            )}
-                        </div>
-                    )}
+                    <div className="flex-grow overflow-y-auto mt-4">
+                        {isLoading ? (
+                            <div className="text-center p-10">
+                                <p>Loading your expenses...</p>
+                            </div>
+                        ) : (
+                            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 sm:p-6">
+                                {currentView === 'expenses' ? (
+                                    <ExpenseList 
+                                        expenses={expenses} 
+                                        onEdit={openModal} 
+                                        onDelete={handleDeleteExpense} 
+                                        cardNames={cardNames}
+                                        selectedExpenses={selectedExpenses}
+                                        onToggleSelect={(id) => handleToggleSelect(id, 'expenses')}
+                                        onToggleSelectAll={() => handleToggleSelectAll('expenses')}
+                                        onDeleteSelected={handleDeleteSelected}
+                                    />
+                                ) : (
+                                    <RecycleBin 
+                                        bin={recycleBin} 
+                                        onRestore={handleRestoreExpense} 
+                                        onDelete={handlePermanentDelete} 
+                                        cardNames={cardNames}
+                                        selectedBinItems={selectedBinItems}
+                                        onToggleSelect={(id) => handleToggleSelect(id, 'bin')}
+                                        onToggleSelectAll={() => handleToggleSelectAll('bin')}
+                                        onRestoreSelected={handleRestoreSelected}
+                                        onDeleteSelected={handlePermanentDeleteSelected}
+                                    />
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </main>
             </div>
             {isModalOpen && (
