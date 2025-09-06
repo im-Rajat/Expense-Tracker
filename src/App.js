@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, query, serverTimestamp, orderBy, writeBatch } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, EmailAuthProvider, reauthenticateWithCurrentUser, updateEmail } from 'firebase/auth';
+import { getFirestore, collection, doc, addDoc, setDoc, getDoc, deleteDoc, onSnapshot, query, serverTimestamp, orderBy, writeBatch, where } from 'firebase/firestore';
 
 // --- Main App Component ---
 export default function App() {
@@ -19,6 +19,7 @@ export default function App() {
     const [selectedExpenses, setSelectedExpenses] = useState([]);
     const [selectedBinItems, setSelectedBinItems] = useState([]);
     const [filterCard, setFilterCard] = useState('all'); // 'all', 'card1', or 'card2'
+    const [customUserId, setCustomUserId] = useState('');
 
 
     // Firebase state
@@ -44,9 +45,6 @@ export default function App() {
     // --- Firebase Initialization and Auth ---
     useEffect(() => {
         try {
-            // Your Firebase configuration object.
-            // For security, these values are stored in a .env.local file
-            // and accessed via process.env.
             const firebaseConfig = {
               apiKey: process.env.REACT_APP_API_KEY,
               authDomain: process.env.REACT_APP_AUTH_DOMAIN,
@@ -70,12 +68,12 @@ export default function App() {
                     setUserId(user.uid);
                 } else {
                     setUserId(null);
-                    // Clear user data on logout
                     setExpenses([]);
                     setRecycleBin([]);
+                    setCustomUserId('');
                 }
                 setIsAuthReady(true);
-                setIsLoading(false); // Stop loading once auth state is determined
+                setIsLoading(false);
             });
             return () => unsubscribe();
         } catch (e) {
@@ -101,12 +99,19 @@ export default function App() {
                 setCardNames(docSnap.data());
             } else {
                 const defaultNames = { card1: 'ICICI Amazon Pay', card2: 'ICICI Coral RuPay' };
-                setDoc(settingsRef, defaultNames).catch(e => console.error("Could not create default card names", e));
+                if (!auth.currentUser.isAnonymous) {
+                  setDoc(settingsRef, defaultNames).catch(e => console.error("Could not create default card names", e));
+                }
                 setCardNames(defaultNames);
             }
-        }, (err) => {
-            console.error("Error fetching card names:", err);
-            setError("Could not fetch card settings.");
+        });
+
+        // Fetch user profile (for customUserId)
+        const profileRef = doc(db, `users/${userId}/settings/profile`);
+        const unsubscribeProfile = onSnapshot(profileRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setCustomUserId(docSnap.data().customUserId);
+            }
         });
         
         // Fetch all active expenses, sorted by date
@@ -116,10 +121,6 @@ export default function App() {
             const expensesData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setExpenses(expensesData);
             setIsLoading(false);
-        }, (err) => {
-            console.error("Error fetching expenses:", err);
-            setError("Could not fetch expenses.");
-            setIsLoading(false);
         });
 
         // Fetch all recycled expenses, sorted by date
@@ -128,41 +129,31 @@ export default function App() {
         const unsubscribeRecycleBin = onSnapshot(qRecycleBin, (querySnapshot) => {
             const binData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setRecycleBin(binData);
-        }, (err) => {
-            console.error("Error fetching recycle bin:", err);
-            setError("Could not fetch recycle bin data.");
         });
 
         return () => {
             unsubscribeExpenses();
             unsubscribeRecycleBin();
             unsubscribeSettings();
+            unsubscribeProfile();
         };
-    }, [isAuthReady, db, userId]);
+    }, [isAuthReady, db, userId, auth]);
 
     // --- Client-side Filtering ---
     const filteredExpenses = useMemo(() => {
-        if (filterCard === 'all') {
-            return expenses;
-        }
+        if (filterCard === 'all') return expenses;
         return expenses.filter(expense => expense.card === filterCard);
     }, [expenses, filterCard]);
 
     const filteredRecycleBin = useMemo(() => {
-        if (filterCard === 'all') {
-            return recycleBin;
-        }
+        if (filterCard === 'all') return recycleBin;
         return recycleBin.filter(item => item.card === filterCard);
     }, [recycleBin, filterCard]);
 
     // --- Selection Handlers ---
     const handleToggleSelect = (expenseId, view) => {
         const setSelection = view === 'expenses' ? setSelectedExpenses : setSelectedBinItems;
-        setSelection(prev => 
-            prev.includes(expenseId) 
-                ? prev.filter(id => id !== expenseId) 
-                : [...prev, expenseId]
-        );
+        setSelection(prev => prev.includes(expenseId) ? prev.filter(id => id !== expenseId) : [...prev, expenseId]);
     };
 
     const handleToggleSelectAll = (view) => {
@@ -178,25 +169,57 @@ export default function App() {
     };
     
     // --- Auth Handlers ---
-    const handleSignUp = async (email, password) => {
+    const handleSignUp = async (customId, password) => {
         setError('');
+        if (!db || !auth) return;
+        const lowerCaseId = customId.toLowerCase();
+        
+        const usernameDocRef = doc(db, 'usernames', lowerCaseId);
+        const usernameDoc = await getDoc(usernameDocRef);
+        
+        if (usernameDoc.exists()) {
+            setError('This User ID is already taken.');
+            return;
+        }
+
+        const email = `${lowerCaseId}@expense-tracker.app`;
         try {
-            await createUserWithEmailAndPassword(auth, email, password);
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+
+            const batch = writeBatch(db);
+            batch.set(usernameDocRef, { uid: user.uid, email: email });
+            const profileDocRef = doc(db, `users/${user.uid}/settings/profile`);
+            batch.set(profileDocRef, { customUserId: customId });
+            await batch.commit();
+
         } catch (err) {
             setError(err.message);
             console.error("Sign up error:", err);
         }
     };
 
-    const handleLogin = async (email, password) => {
+    const handleLogin = async (customId, password) => {
         setError('');
+        if (!db || !auth) return;
+        const lowerCaseId = customId.toLowerCase();
+
+        const usernameDocRef = doc(db, 'usernames', lowerCaseId);
         try {
+            const usernameDoc = await getDoc(usernameDocRef);
+            if (!usernameDoc.exists()) {
+                setError('User ID not found.');
+                return;
+            }
+            const { email } = usernameDoc.data();
+            
             await signInWithEmailAndPassword(auth, email, password);
         } catch (err) {
             setError(err.message);
             console.error("Login error:", err);
         }
     };
+
 
     const handleAnonymousSignIn = async () => {
         setError('');
@@ -223,10 +246,7 @@ export default function App() {
         if (!db || !userId) return;
         const expensesPath = `/users/${userId}/expenses`;
         try {
-            await addDoc(collection(db, expensesPath), {
-                ...expense,
-                createdAt: serverTimestamp(),
-            });
+            await addDoc(collection(db, expensesPath), { ...expense, createdAt: serverTimestamp() });
             closeModal();
         } catch (e) {
             console.error("Error adding document: ", e);
@@ -257,6 +277,58 @@ export default function App() {
             setError("Failed to update card names.");
         }
     };
+    
+    const handleUpdateUserId = async (newCustomId, password) => {
+        setError('');
+        if (!db || !auth.currentUser || !customUserId) return;
+
+        const lowerCaseNewId = newCustomId.toLowerCase();
+        const currentUser = auth.currentUser;
+        
+        if (lowerCaseNewId === customUserId.toLowerCase()) {
+            setError("This is already your User ID.");
+            return;
+        }
+
+        const newUsernameDocRef = doc(db, 'usernames', lowerCaseNewId);
+        const newUsernameDoc = await getDoc(newUsernameDocRef);
+        if (newUsernameDoc.exists()) {
+            setError('This User ID is already taken.');
+            return;
+        }
+
+        try {
+            const credential = EmailAuthProvider.credential(currentUser.email, password);
+            await reauthenticateWithCurrentUser(currentUser, credential);
+        } catch (err) {
+            setError('Incorrect password. User ID not changed.');
+            return;
+        }
+        
+        const newEmail = `${lowerCaseNewId}@expense-tracker.app`;
+        try {
+            await updateEmail(currentUser, newEmail);
+        } catch (err) {
+            setError('Failed to update authentication details. Please try again.');
+            return;
+        }
+
+        const oldUsernameDocRef = doc(db, 'usernames', customUserId.toLowerCase());
+        const profileDocRef = doc(db, `users/${currentUser.uid}/settings/profile`);
+        const batch = writeBatch(db);
+        
+        batch.set(newUsernameDocRef, { uid: currentUser.uid, email: newEmail });
+        batch.update(profileDocRef, { customUserId: newCustomId });
+        batch.delete(oldUsernameDocRef);
+
+        try {
+            await batch.commit();
+            setIsSettingsModalOpen(false);
+        } catch (err) {
+            setError('Failed to update database. Please contact support.');
+        }
+    };
+
 
     const handleDeleteExpense = async (expense) => {
         if (!db || !userId) return;
@@ -273,26 +345,21 @@ export default function App() {
     
     const handleDeleteSelected = async () => {
         if (!db || !userId || selectedExpenses.length === 0) return;
-        
         const batch = writeBatch(db);
         const expensesToMove = expenses.filter(exp => selectedExpenses.includes(exp.id));
-
         expensesToMove.forEach(expense => {
             const expenseRef = doc(db, `users/${userId}/expenses`, expense.id);
             const binRef = doc(db, `users/${userId}/recycleBin`, expense.id);
             batch.set(binRef, expense);
             batch.delete(expenseRef);
         });
-
         try {
             await batch.commit();
             setSelectedExpenses([]);
         } catch (e) {
-            console.error("Error moving selected to recycle bin: ", e);
             setError("Failed to delete selected expenses.");
         }
     };
-
 
     const handleRestoreExpense = async (expense) => {
         if (!db || !userId) return;
@@ -302,41 +369,35 @@ export default function App() {
             await setDoc(expenseRef, expense);
             await deleteDoc(binRef);
         } catch (e) {
-            console.error("Error restoring expense: ", e);
             setError("Failed to restore expense.");
         }
     };
 
     const handleRestoreSelected = async () => {
         if (!db || !userId || selectedBinItems.length === 0) return;
-
         const batch = writeBatch(db);
         const itemsToRestore = recycleBin.filter(item => selectedBinItems.includes(item.id));
-
         itemsToRestore.forEach(item => {
             const expenseRef = doc(db, `users/${userId}/expenses`, item.id);
             const binRef = doc(db, `users/${userId}/recycleBin`, item.id);
             batch.set(expenseRef, item);
             batch.delete(binRef);
         });
-
         try {
             await batch.commit();
             setSelectedBinItems([]);
         } catch (e) {
-            console.error("Error restoring selected items: ", e);
             setError("Failed to restore selected items.");
         }
     };
 
     const handlePermanentDelete = async (id) => {
         if (!db || !userId) return;
-        if (window.confirm("Are you sure you want to permanently delete this item? This action cannot be undone.")) {
+        if (window.confirm("Are you sure? This cannot be undone.")) {
             const binRef = doc(db, `/users/${userId}/recycleBin`, id);
             try {
                 await deleteDoc(binRef);
             } catch (e) {
-                console.error("Error permanently deleting: ", e);
                 setError("Failed to permanently delete expense.");
             }
         }
@@ -344,24 +405,20 @@ export default function App() {
 
     const handlePermanentDeleteSelected = async () => {
         if (!db || !userId || selectedBinItems.length === 0) return;
-        
-        if (window.confirm(`Are you sure you want to permanently delete ${selectedBinItems.length} items? This action cannot be undone.`)) {
+        if (window.confirm(`Permanently delete ${selectedBinItems.length} items?`)) {
             const batch = writeBatch(db);
             selectedBinItems.forEach(id => {
                 const binRef = doc(db, `users/${userId}/recycleBin`, id);
                 batch.delete(binRef);
             });
-
             try {
                 await batch.commit();
                 setSelectedBinItems([]);
             } catch (e) {
-                console.error("Error permanently deleting selected items: ", e);
                 setError("Failed to permanently delete selected items.");
             }
         }
     };
-
 
     // --- Modal Control ---
     const openModal = (expense = null) => {
@@ -376,37 +433,25 @@ export default function App() {
 
     // --- Calculated Totals ---
     const totals = useMemo(() => {
-        const card1Total = expenses
-            .filter(e => e.card === 'card1')
-            .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-        const card2Total = expenses
-            .filter(e => e.card === 'card2')
-            .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-        return {
-            [cardNames.card1]: card1Total,
-            [cardNames.card2]: card2Total,
-            total: card1Total + card2Total,
-        };
-    }, [expenses, cardNames]);
-
+        const card1Total = expenses.filter(e => e.card === 'card1').reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+        const card2Total = expenses.filter(e => e.card === 'card2').reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+        return { total: card1Total + card2Total, card1: card1Total, card2: card2Total };
+    }, [expenses]);
+    
     // --- Render Logic ---
     if (!isAuthReady) {
-        return (
-            <div className="bg-gray-100 dark:bg-gray-900 min-h-screen flex items-center justify-center">
-                <p className="dark:text-white">Loading application...</p>
-            </div>
-        );
+        return <div className="bg-gray-100 dark:bg-gray-900 min-h-screen flex items-center justify-center"><p className="dark:text-white">Loading application...</p></div>;
     }
 
     if (!userId) {
-        return <LoginScreen onLogin={handleLogin} onSignUp={handleSignUp} onAnonymous={handleAnonymousSignIn} error={error} />;
+        return <LoginScreen onLogin={handleLogin} onSignUp={handleSignUp} onAnonymous={handleAnonymousSignIn} error={error} setError={setError} />;
     }
 
     return (
         <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900 font-sans text-gray-800 dark:text-gray-100 transition-colors duration-300">
             <div className="max-w-4xl mx-auto w-full flex flex-col p-4 sm:p-6 lg:p-8 min-h-0">
                 <Header 
-                    userId={userId} 
+                    customUserId={customUserId} 
                     onLogout={handleLogout} 
                     onOpenSettings={() => setIsSettingsModalOpen(true)}
                     onToggleTheme={toggleTheme}
@@ -414,85 +459,41 @@ export default function App() {
                 />
                 <main className="flex flex-col flex-grow min-h-0">
                     <SummaryCards totals={totals} cardNames={cardNames} />
-                    <NavBar 
-                        currentView={currentView} 
-                        setCurrentView={setCurrentView} 
-                        onAddNew={() => openModal()}
-                        filterCard={filterCard}
-                        onFilterChange={setFilterCard}
-                        cardNames={cardNames}
-                    />
-                    
+                    <NavBar currentView={currentView} setCurrentView={setCurrentView} onAddNew={() => openModal()} filterCard={filterCard} onFilterChange={setFilterCard} cardNames={cardNames} />
                     {error && <p className="text-red-500 bg-red-100 dark:bg-red-900/20 dark:text-red-400 p-3 rounded-lg my-4 text-center">{error}</p>}
-                    
                     <div className="flex-grow overflow-y-auto mt-4">
-                        {isLoading ? (
-                            <div className="text-center p-10">
-                                <p>Loading your expenses...</p>
-                            </div>
-                        ) : (
+                        {isLoading ? <div className="text-center p-10"><p>Loading your expenses...</p></div> : 
                             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 sm:p-6">
                                 {currentView === 'expenses' ? (
-                                    <ExpenseList 
-                                        expenses={filteredExpenses} 
-                                        onEdit={openModal} 
-                                        onDelete={handleDeleteExpense} 
-                                        cardNames={cardNames}
-                                        selectedExpenses={selectedExpenses}
-                                        onToggleSelect={(id) => handleToggleSelect(id, 'expenses')}
-                                        onToggleSelectAll={() => handleToggleSelectAll('expenses')}
-                                        onDeleteSelected={handleDeleteSelected}
-                                    />
+                                    <ExpenseList expenses={filteredExpenses} onEdit={openModal} onDelete={handleDeleteExpense} cardNames={cardNames} selectedExpenses={selectedExpenses} onToggleSelect={(id) => handleToggleSelect(id, 'expenses')} onToggleSelectAll={() => handleToggleSelectAll('expenses')} onDeleteSelected={handleDeleteSelected} />
                                 ) : (
-                                    <RecycleBin 
-                                        bin={filteredRecycleBin} 
-                                        onRestore={handleRestoreExpense} 
-                                        onDelete={handlePermanentDelete} 
-                                        cardNames={cardNames}
-                                        selectedBinItems={selectedBinItems}
-                                        onToggleSelect={(id) => handleToggleSelect(id, 'bin')}
-                                        onToggleSelectAll={() => handleToggleSelectAll('bin')}
-                                        onRestoreSelected={handleRestoreSelected}
-                                        onDeleteSelected={handlePermanentDeleteSelected}
-                                    />
+                                    <RecycleBin bin={filteredRecycleBin} onRestore={handleRestoreExpense} onDelete={handlePermanentDelete} cardNames={cardNames} selectedBinItems={selectedBinItems} onToggleSelect={(id) => handleToggleSelect(id, 'bin')} onToggleSelectAll={() => handleToggleSelectAll('bin')} onRestoreSelected={handleRestoreSelected} onDeleteSelected={handlePermanentDeleteSelected} />
                                 )}
                             </div>
-                        )}
+                        }
                     </div>
                 </main>
             </div>
-            {isModalOpen && (
-                <ExpenseModal
-                    isOpen={isModalOpen}
-                    onClose={closeModal}
-                    onSave={editingExpense ? handleUpdateExpense : handleAddExpense}
-                    expense={editingExpense}
-                    cardNames={cardNames}
-                />
-            )}
-            <SettingsModal
-                isOpen={isSettingsModalOpen}
-                onClose={() => setIsSettingsModalOpen(false)}
-                onSave={handleUpdateCardNames}
-                currentNames={cardNames}
-            />
+            {isModalOpen && <ExpenseModal isOpen={isModalOpen} onClose={closeModal} onSave={editingExpense ? handleUpdateExpense : handleAddExpense} expense={editingExpense} cardNames={cardNames} />}
+            {isSettingsModalOpen && <SettingsModal isOpen={isSettingsModalOpen} onClose={() => { setIsSettingsModalOpen(false); setError(''); }} onSaveUserId={handleUpdateUserId} onSaveCardNames={handleUpdateCardNames} currentNames={cardNames} currentUserId={customUserId} error={error} />}
         </div>
     );
 }
 
 // --- Sub-components ---
 
-const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error }) => {
-    const [email, setEmail] = useState('');
+const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error, setError }) => {
+    const [customUserId, setCustomUserId] = useState('');
     const [password, setPassword] = useState('');
 
     const handleSubmit = (e, handler) => {
         e.preventDefault();
-        if (!email || !password) {
-            alert("Please enter both email and password.");
+        setError('');
+        if (!customUserId || !password) {
+            setError("Please enter both User ID and password.");
             return;
         }
-        handler(email, password);
+        handler(customUserId, password);
     };
 
     return (
@@ -503,39 +504,19 @@ const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error }) => {
                     <p className="text-gray-500 dark:text-gray-400 mt-1">Sign in to continue</p>
                 </header>
                 <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-lg">
-                    <form onSubmit={(e) => handleSubmit(e, onLogin)}>
+                    <form>
                         <div className="mb-4">
-                            <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email Address</label>
-                            <input
-                                type="email"
-                                id="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
-                                placeholder="you@example.com"
-                                required
-                            />
+                            <label htmlFor="customUserId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">User ID</label>
+                            <input type="text" id="customUserId" value={customUserId} onChange={(e) => setCustomUserId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" placeholder="your-unique-id" required />
                         </div>
                         <div className="mb-6">
                             <label htmlFor="password"className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
-                            <input
-                                type="password"
-                                id="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
-                                placeholder="••••••••"
-                                required
-                            />
+                            <input type="password" id="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" placeholder="••••••••" required />
                         </div>
                         {error && <p className="text-red-500 text-sm text-center mb-4">{error}</p>}
                         <div className="flex flex-col gap-3">
-                           <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
-                                Login
-                            </button>
-                             <button type="button" onClick={(e) => handleSubmit(e, onSignUp)} className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
-                                Sign Up
-                            </button>
+                           <button type="button" onClick={(e) => handleSubmit(e, onLogin)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">Login</button>
+                           <button type="button" onClick={(e) => handleSubmit(e, onSignUp)} className="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">Sign Up</button>
                         </div>
                     </form>
                     <div className="my-6 flex items-center">
@@ -543,21 +524,19 @@ const LoginScreen = ({ onLogin, onSignUp, onAnonymous, error }) => {
                         <span className="mx-4 text-sm text-gray-500 dark:text-gray-400">OR</span>
                         <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
                     </div>
-                    <button onClick={onAnonymous} className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 font-bold py-2 px-4 rounded-lg transition-colors">
-                        Continue Anonymously
-                    </button>
+                    <button onClick={onAnonymous} className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-200 font-bold py-2 px-4 rounded-lg transition-colors">Continue Anonymously</button>
                 </div>
             </div>
         </div>
     );
 };
 
-const Header = ({ userId, onLogout, onOpenSettings, onToggleTheme, theme }) => (
+const Header = ({ customUserId, onLogout, onOpenSettings, onToggleTheme, theme }) => (
     <header className="mb-6">
         <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
-                 <button onClick={onOpenSettings} className="bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 p-2 rounded-full transition-colors" title="Edit Card Names">
-                    <SettingsIcon />
+                 <button onClick={onOpenSettings} className="bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 p-2 rounded-full transition-colors" title="Settings">
+                    <UserIcon />
                 </button>
                 <button onClick={onToggleTheme} className="bg-gray-200 hover:bg-gray-300 text-gray-700 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 p-2 rounded-full transition-colors" title="Toggle Theme">
                     {theme === 'light' ? <MoonIcon /> : <SunIcon />}
@@ -565,8 +544,7 @@ const Header = ({ userId, onLogout, onOpenSettings, onToggleTheme, theme }) => (
             </div>
             <div className="text-center">
                  <h1 className="text-4xl font-bold text-indigo-600 dark:text-indigo-400">Expense Tracker</h1>
-                 <p className="text-gray-500 dark:text-gray-400 mt-1">Log and manage your credit card expenses with ease.</p>
-                 {userId && <p className="text-xs text-gray-400 dark:text-gray-500 mt-2 break-all">User ID: {userId}</p>}
+                 <p className="text-gray-500 dark:text-gray-400 mt-1">Welcome, <span className="font-semibold">{customUserId || 'Guest'}</span></p>
             </div>
             <button onClick={onLogout} className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-3 rounded-lg text-sm transition-colors">
                 Logout
@@ -575,16 +553,15 @@ const Header = ({ userId, onLogout, onOpenSettings, onToggleTheme, theme }) => (
     </header>
 );
 
-
 const SummaryCards = ({ totals, cardNames }) => (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
             <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 truncate">{cardNames.card1}</h3>
-            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">₹{totals[cardNames.card1]?.toFixed(2) || '0.00'}</p>
+            <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">₹{totals.card1?.toFixed(2) || '0.00'}</p>
         </div>
         <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-md border border-gray-200 dark:border-gray-700">
             <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 truncate">{cardNames.card2}</h3>
-            <p className="text-2xl font-bold text-green-600 dark:text-green-400">₹{totals[cardNames.card2]?.toFixed(2) || '0.00'}</p>
+            <p className="text-2xl font-bold text-green-600 dark:text-green-400">₹{totals.card2?.toFixed(2) || '0.00'}</p>
         </div>
         <div className="bg-indigo-600 dark:bg-indigo-500 text-white p-4 rounded-xl shadow-md">
             <h3 className="text-sm font-semibold text-indigo-200 dark:text-indigo-200">Total Expenses</h3>
@@ -637,24 +614,14 @@ const ExpenseList = ({ expenses, onEdit, onDelete, cardNames, selectedExpenses, 
                 </div>
             )}
             <div className="space-y-3">
-                <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
-                    <input 
-                        type="checkbox"
-                        className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500"
-                        onChange={onToggleSelectAll}
-                        checked={expenses.length > 0 && selectedExpenses.length === expenses.length}
-                    />
-                    <div className="flex-1"></div>
+                <div className="flex items-center bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+                    <input type="checkbox" className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500" onChange={onToggleSelectAll} checked={expenses.length > 0 && selectedExpenses.length === expenses.length} />
+                    <span className="ml-4 text-sm font-medium text-gray-500 dark:text-gray-400">Select All</span>
                 </div>
 
                 {expenses.map(expense => (
                     <div key={expense.id} className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors">
-                        <input
-                            type="checkbox"
-                            className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500"
-                            checked={selectedExpenses.includes(expense.id)}
-                            onChange={() => onToggleSelect(expense.id)}
-                        />
+                        <input type="checkbox" className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500" checked={selectedExpenses.includes(expense.id)} onChange={() => onToggleSelect(expense.id)} />
                         <div className="flex items-center gap-4 flex-grow ml-4">
                             <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${expense.card === 'card1' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400' : 'bg-green-100 text-green-600 dark:bg-green-900/50 dark:text-green-400'}`}>
                                 <CreditCardIcon />
@@ -694,24 +661,14 @@ const RecycleBin = ({ bin, onRestore, onDelete, cardNames, selectedBinItems, onT
                 </div>
             )}
              <div className="space-y-3">
-                 <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
-                    <input 
-                        type="checkbox"
-                        className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500"
-                        onChange={onToggleSelectAll}
-                        checked={bin.length > 0 && selectedBinItems.length === bin.length}
-                    />
-                    <div className="flex-1"></div>
+                 <div className="flex items-center bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+                    <input type="checkbox" className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500" onChange={onToggleSelectAll} checked={bin.length > 0 && selectedBinItems.length === bin.length} />
+                    <span className="ml-4 text-sm font-medium text-gray-500 dark:text-gray-400">Select All</span>
                 </div>
 
                 {bin.map(expense => (
                     <div key={expense.id} className="flex items-center justify-between bg-red-50 dark:bg-red-900/20 p-3 rounded-lg">
-                        <input
-                            type="checkbox"
-                            className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500"
-                            checked={selectedBinItems.includes(expense.id)}
-                            onChange={() => onToggleSelect(expense.id)}
-                        />
+                        <input type="checkbox" className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500" checked={selectedBinItems.includes(expense.id)} onChange={() => onToggleSelect(expense.id)} />
                         <div className="flex-1 ml-4">
                             <p className="font-bold">₹{parseFloat(expense.amount).toFixed(2)}</p>
                             <p className="text-sm text-gray-600 dark:text-gray-300">{expense.description || 'No description'}</p>
@@ -729,29 +686,13 @@ const RecycleBin = ({ bin, onRestore, onDelete, cardNames, selectedBinItems, onT
 };
 
 const ExpenseModal = ({ isOpen, onClose, onSave, expense, cardNames }) => {
-    const [formData, setFormData] = useState({
-        amount: '',
-        date: new Date().toISOString().split('T')[0],
-        description: '',
-        card: 'card1'
-    });
+    const [formData, setFormData] = useState({ amount: '', date: new Date().toISOString().split('T')[0], description: '', card: 'card1' });
 
     useEffect(() => {
         if (expense) {
-            setFormData({
-                id: expense.id,
-                amount: expense.amount,
-                date: expense.date,
-                description: expense.description || '',
-                card: expense.card,
-            });
+            setFormData({ id: expense.id, amount: expense.amount, date: expense.date, description: expense.description || '', card: expense.card });
         } else {
-             setFormData({
-                amount: '',
-                date: new Date().toISOString().split('T')[0],
-                description: '',
-                card: 'card1'
-            });
+             setFormData({ amount: '', date: new Date().toISOString().split('T')[0], description: '', card: 'card1' });
         }
     }, [expense]);
 
@@ -779,20 +720,15 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense, cardNames }) => {
                         <h2 className="text-2xl font-bold mb-4 dark:text-white">{expense ? 'Edit Expense' : 'Add New Expense'}</h2>
                         <div className="mb-4">
                             <label htmlFor="amount" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Amount (₹)</label>
-                            <input type="number" name="amount" id="amount" value={formData.amount} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
-                                placeholder="0.00" step="0.01" required />
+                            <input type="number" name="amount" id="amount" value={formData.amount} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" placeholder="0.00" step="0.01" required />
                         </div>
                         <div className="mb-4">
                             <label htmlFor="date" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
-                            <input type="date" name="date" id="date" value={formData.date} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
+                            <input type="date" name="date" id="date" value={formData.date} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
                         </div>
                         <div className="mb-4">
                             <label htmlFor="description" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description (Optional)</label>
-                            <input type="text" name="description" id="description" value={formData.description} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
-                                placeholder="e.g., Coffee, Groceries" />
+                            <input type="text" name="description" id="description" value={formData.description} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" placeholder="e.g., Coffee, Groceries" />
                         </div>
                         <div>
                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Card</label>
@@ -818,21 +754,32 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense, cardNames }) => {
     );
 };
 
-const SettingsModal = ({ isOpen, onClose, onSave, currentNames }) => {
-    const [names, setNames] = useState(currentNames);
+const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, currentNames, currentUserId, error }) => {
+    const [activeTab, setActiveTab] = useState('profile');
+    
+    // State for card names form
+    const [cardNames, setCardNames] = useState(currentNames);
+    const [cardNamesChanged, setCardNamesChanged] = useState(false);
+    
+    // State for user id form
+    const [newCustomUserId, setNewCustomUserId] = useState(currentUserId);
+    const [password, setPassword] = useState('');
 
     useEffect(() => {
-        setNames(currentNames);
-    }, [currentNames]);
+        setCardNames(currentNames);
+        setNewCustomUserId(currentUserId);
+    }, [currentNames, currentUserId]);
+    
+    useEffect(() => {
+        setCardNamesChanged(JSON.stringify(currentNames) !== JSON.stringify(cardNames));
+    }, [cardNames, currentNames]);
 
-    const handleChange = (e) => {
-        const { name, value } = e.target;
-        setNames(prev => ({ ...prev, [name]: value }));
-    };
-
-    const handleSubmit = (e) => {
+    const handleCardNamesChange = (e) => setCardNames(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    const handleCardNamesSubmit = (e) => { e.preventDefault(); onSaveCardNames(cardNames); };
+    
+    const handleUserIdSubmit = (e) => {
         e.preventDefault();
-        onSave(names);
+        onSaveUserId(newCustomUserId, password);
     };
 
     if (!isOpen) return null;
@@ -840,30 +787,61 @@ const SettingsModal = ({ isOpen, onClose, onSave, currentNames }) => {
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md">
-                <form onSubmit={handleSubmit}>
-                    <div className="p-6">
-                        <h2 className="text-2xl font-bold mb-4 dark:text-white">Edit Card Names</h2>
-                        <div className="mb-4">
-                            <label htmlFor="card1" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Card 1 Name</label>
-                            <input type="text" name="card1" id="card1" value={names.card1} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
-                        </div>
-                        <div className="mb-4">
-                            <label htmlFor="card2" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Card 2 Name</label>
-                            <input type="text" name="card2" id="card2" value={names.card2} onChange={handleChange}
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
-                        </div>
+                <div className="p-6">
+                    <h2 className="text-2xl font-bold mb-4 dark:text-white">Settings</h2>
+                    <div className="border-b border-gray-200 dark:border-gray-700 mb-4">
+                        <nav className="-mb-px flex space-x-4" aria-label="Tabs">
+                            <button onClick={() => setActiveTab('profile')} className={`${activeTab === 'profile' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}>
+                                Profile
+                            </button>
+                            <button onClick={() => setActiveTab('cards')} className={`${activeTab === 'cards' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}>
+                                Cards
+                            </button>
+                        </nav>
                     </div>
-                    <div className="bg-gray-50 dark:bg-gray-700/50 px-6 py-3 flex justify-end gap-3 rounded-b-xl">
-                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">Cancel</button>
-                        <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600">Save Changes</button>
-                    </div>
-                </form>
+
+                    {error && <p className="text-red-500 text-sm text-center mb-4">{error}</p>}
+
+                    {activeTab === 'profile' && (
+                        <form onSubmit={handleUserIdSubmit}>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Change your unique User ID. You will need to enter your current password to confirm this change.</p>
+                            <div className="mb-4">
+                                <label htmlFor="newCustomUserId" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New User ID</label>
+                                <input type="text" id="newCustomUserId" value={newCustomUserId} onChange={(e) => setNewCustomUserId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
+                            </div>
+                            <div className="mb-4">
+                                <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Current Password</label>
+                                <input type="password" id="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
+                            </div>
+                             <div className="bg-gray-50 dark:bg-gray-700/50 -mx-6 -mb-6 px-6 py-3 flex justify-end gap-3 rounded-b-xl mt-6">
+                                <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">Cancel</button>
+                                <button type="submit" disabled={newCustomUserId === currentUserId} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:hover:bg-indigo-600">Update User ID</button>
+                            </div>
+                        </form>
+                    )}
+
+                    {activeTab === 'cards' && (
+                        <form onSubmit={handleCardNamesSubmit}>
+                             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Edit the names of your credit cards. These names will be used throughout the app.</p>
+                            <div className="mb-4">
+                                <label htmlFor="card1" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Card 1 Name</label>
+                                <input type="text" name="card1" id="card1" value={cardNames.card1} onChange={handleCardNamesChange} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
+                            </div>
+                            <div className="mb-4">
+                                <label htmlFor="card2" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Card 2 Name</label>
+                                <input type="text" name="card2" id="card2" value={cardNames.card2} onChange={handleCardNamesChange} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
+                            </div>
+                             <div className="bg-gray-50 dark:bg-gray-700/50 -mx-6 -mb-6 px-6 py-3 flex justify-end gap-3 rounded-b-xl mt-6">
+                                <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">Cancel</button>
+                                <button type="submit" disabled={!cardNamesChanged} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:hover:bg-indigo-600">Save Card Names</button>
+                            </div>
+                        </form>
+                    )}
+                </div>
             </div>
         </div>
     );
 };
-
 
 // --- SVG Icons ---
 const PlusIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>);
@@ -875,3 +853,4 @@ const XCircleIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" he
 const SettingsIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>);
 const MoonIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>;
 const SunIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>;
+const UserIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>;
