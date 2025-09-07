@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, EmailAuthProvider, reauthenticateWithCredential, updateEmail, linkWithCredential, updatePassword } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, EmailAuthProvider, reauthenticateWithCredential, updateEmail, linkWithCredential, updatePassword } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, setDoc, getDoc, deleteDoc, onSnapshot, query, serverTimestamp, orderBy, writeBatch } from 'firebase/firestore';
 
 // --- Main App Component ---
@@ -21,6 +21,8 @@ export default function App() {
     const [selectedBinItems, setSelectedBinItems] = useState([]);
     const [filterCard, setFilterCard] = useState('all'); // 'all', 'card1', or 'card2'
     const [customUserId, setCustomUserId] = useState('');
+    const [isAnonInfoModalOpen, setIsAnonInfoModalOpen] = useState(false);
+    const [generatedAnonId, setGeneratedAnonId] = useState('');
 
 
     // Firebase state
@@ -250,11 +252,29 @@ export default function App() {
 
     const handleAnonymousSignIn = async () => {
         setError('');
+        if (!db || !auth) return;
+    
+        const uniqueId = `guest-${Math.random().toString(36).substring(2, 8)}`;
+        const password = 'password';
+        const email = `${uniqueId}@expense-tracker.app`;
+    
         try {
-            await signInAnonymously(auth);
+            const usernameDocRef = doc(db, 'usernames', uniqueId);
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+    
+            const batch = writeBatch(db);
+            batch.set(usernameDocRef, { uid: user.uid, email: email });
+            const profileDocRef = doc(db, `users/${user.uid}/settings/profile`);
+            batch.set(profileDocRef, { customUserId: uniqueId });
+            await batch.commit();
+    
+            setGeneratedAnonId(uniqueId);
+            setIsAnonInfoModalOpen(true);
+    
         } catch (err) {
             setError(err.message);
-            console.error("Anonymous sign-in error:", err);
+            console.error("Anonymous sign-up error:", err);
         }
     };
 
@@ -529,6 +549,7 @@ export default function App() {
             </div>
             {isModalOpen && <ExpenseModal isOpen={isModalOpen} onClose={closeModal} onSave={editingExpense ? handleUpdateExpense : handleAddExpense} expense={editingExpense} cardNames={cardNames} />}
             {isSettingsModalOpen && <SettingsModal isOpen={isSettingsModalOpen} onClose={() => { setIsSettingsModalOpen(false); setError(''); setSuccessMessage(''); }} onSaveUserId={handleUpdateUserId} onSaveCardNames={handleUpdateCardNames} onSignUp={handleSignUp} onSavePassword={handleUpdatePassword} currentNames={cardNames} currentUserId={customUserId} error={error} setError={setError} successMessage={successMessage} isAnonymous={auth.currentUser?.isAnonymous} />}
+            {isAnonInfoModalOpen && <AnonymousInfoModal isOpen={isAnonInfoModalOpen} onClose={() => setIsAnonInfoModalOpen(false)} userId={generatedAnonId} />}
         </div>
     );
 }
@@ -971,6 +992,68 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignU
         </div>
     );
 };
+
+const AnonymousInfoModal = ({ isOpen, onClose, userId }) => {
+    const [copied, setCopied] = useState(false);
+    if (!isOpen) return null;
+
+    const handleCopy = () => {
+        const textToCopy = `User ID: ${userId}\nPassword: password`;
+        const textArea = document.createElement("textarea");
+        textArea.style.position = 'fixed';
+        textArea.style.top = 0;
+        textArea.style.left = 0;
+        textArea.style.width = '2em';
+        textArea.style.height = '2em';
+        textArea.style.padding = 0;
+        textArea.style.border = 'none';
+        textArea.style.outline = 'none';
+        textArea.style.boxShadow = 'none';
+        textArea.style.background = 'transparent';
+        textArea.value = textToCopy;
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+            document.execCommand('copy');
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000); // Reset after 2 seconds
+        } catch (err) {
+            console.error('Failed to copy: ', err);
+        }
+        document.body.removeChild(textArea);
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-sm text-center">
+                <div className="p-6">
+                    <h2 className="text-2xl font-bold mb-4 dark:text-white">Your Guest Account Info</h2>
+                    <p className="text-gray-600 dark:text-gray-300 mb-4">
+                        You can use these credentials to log in later. Please save them!
+                    </p>
+                    <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg space-y-2 text-left">
+                        <div>
+                            <span className="font-semibold text-gray-700 dark:text-gray-300">User ID:</span>
+                            <code className="ml-2 bg-gray-200 dark:bg-gray-600 p-1 rounded font-mono">{userId}</code>
+                        </div>
+                        <div>
+                            <span className="font-semibold text-gray-700 dark:text-gray-300">Password:</span>
+                            <code className="ml-2 bg-gray-200 dark:bg-gray-600 p-1 rounded font-mono">password</code>
+                        </div>
+                    </div>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-700/50 px-6 py-3 flex justify-center gap-3 rounded-b-xl">
+                    <button onClick={handleCopy} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500 w-28">
+                        {copied ? 'Copied!' : 'Copy Info'}
+                    </button>
+                    <button onClick={onClose} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600">Got it!</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 // --- SVG Icons ---
 const PlusIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>);
