@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, EmailAuthProvider, reauthenticateWithCredential, updateEmail, linkWithCredential } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, EmailAuthProvider, reauthenticateWithCredential, updateEmail, linkWithCredential, updatePassword } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, setDoc, getDoc, deleteDoc, onSnapshot, query, serverTimestamp, orderBy, writeBatch } from 'firebase/firestore';
 
 // --- Main App Component ---
@@ -13,6 +13,7 @@ export default function App() {
     const [currentView, setCurrentView] = useState('expenses'); // 'expenses' or 'bin'
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
+    const [successMessage, setSuccessMessage] = useState('');
     const [cardNames, setCardNames] = useState({ card1: 'Card 1', card2: 'Card 2' });
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
@@ -267,6 +268,31 @@ export default function App() {
         }
     };
 
+    const handleUpdatePassword = async (currentPassword, newPassword) => {
+        setError('');
+        setSuccessMessage('');
+        if (!auth.currentUser || auth.currentUser.isAnonymous) {
+            setError("Password can't be changed for guest accounts.");
+            return;
+        }
+
+        const user = auth.currentUser;
+        const credential = EmailAuthProvider.credential(user.email, currentPassword);
+
+        try {
+            await reauthenticateWithCredential(user, credential);
+            await updatePassword(user, newPassword);
+            setSuccessMessage("Password updated successfully!");
+            setTimeout(() => {
+                setSuccessMessage('');
+                setIsSettingsModalOpen(false);
+            }, 2000);
+        } catch (err) {
+            setError(err.message);
+            console.error("Password update error:", err);
+        }
+    };
+
     // --- CRUD Handlers ---
     const handleAddExpense = async (expense) => {
         if (!db || !userId) return;
@@ -502,7 +528,7 @@ export default function App() {
                 </main>
             </div>
             {isModalOpen && <ExpenseModal isOpen={isModalOpen} onClose={closeModal} onSave={editingExpense ? handleUpdateExpense : handleAddExpense} expense={editingExpense} cardNames={cardNames} />}
-            {isSettingsModalOpen && <SettingsModal isOpen={isSettingsModalOpen} onClose={() => { setIsSettingsModalOpen(false); setError(''); }} onSaveUserId={handleUpdateUserId} onSaveCardNames={handleUpdateCardNames} onSignUp={handleSignUp} currentNames={cardNames} currentUserId={customUserId} error={error} isAnonymous={auth.currentUser?.isAnonymous} />}
+            {isSettingsModalOpen && <SettingsModal isOpen={isSettingsModalOpen} onClose={() => { setIsSettingsModalOpen(false); setError(''); setSuccessMessage(''); }} onSaveUserId={handleUpdateUserId} onSaveCardNames={handleUpdateCardNames} onSignUp={handleSignUp} onSavePassword={handleUpdatePassword} currentNames={cardNames} currentUserId={customUserId} error={error} setError={setError} successMessage={successMessage} isAnonymous={auth.currentUser?.isAnonymous} />}
         </div>
     );
 }
@@ -784,7 +810,7 @@ const ExpenseModal = ({ isOpen, onClose, onSave, expense, cardNames }) => {
     );
 };
 
-const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignUp, currentNames, currentUserId, error, isAnonymous }) => {
+const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignUp, onSavePassword, currentNames, currentUserId, error, setError, successMessage, isAnonymous }) => {
     const [activeTab, setActiveTab] = useState('profile');
     
     // State for card names form
@@ -795,6 +821,11 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignU
     const [newCustomUserId, setNewCustomUserId] = useState(currentUserId);
     const [password, setPassword] = useState('');
 
+    // State for password change form
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+
     useEffect(() => {
         setCardNames(currentNames);
         if(!isAnonymous) {
@@ -802,11 +833,19 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignU
         } else {
             setNewCustomUserId('');
         }
-    }, [currentNames, currentUserId, isAnonymous]);
+    }, [currentNames, currentUserId, isAnonymous, isOpen]);
     
     useEffect(() => {
         setCardNamesChanged(JSON.stringify(currentNames) !== JSON.stringify(cardNames));
     }, [cardNames, currentNames]);
+
+    useEffect(() => {
+        if (successMessage) {
+            setCurrentPassword('');
+            setNewPassword('');
+            setConfirmPassword('');
+        }
+    }, [successMessage]);
 
     const handleCardNamesChange = (e) => setCardNames(prev => ({ ...prev, [e.target.name]: e.target.value }));
     const handleCardNamesSubmit = (e) => { e.preventDefault(); onSaveCardNames(cardNames); };
@@ -818,6 +857,20 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignU
         } else {
             onSaveUserId(newCustomUserId, password);
         }
+    };
+
+    const handlePasswordSubmit = (e) => {
+        e.preventDefault();
+        setError('');
+        if (newPassword !== confirmPassword) {
+            setError("New passwords don't match.");
+            return;
+        }
+        if (newPassword.length < 6) {
+            setError("Password should be at least 6 characters.");
+            return;
+        }
+        onSavePassword(currentPassword, newPassword);
     };
 
     if (!isOpen) return null;
@@ -838,14 +891,21 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignU
                                {profileTitle}
                             </button>
                             {!isAnonymous && (
+                                <>
                                 <button onClick={() => setActiveTab('cards')} className={`${activeTab === 'cards' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}>
                                     Cards
                                 </button>
+                                <button onClick={() => setActiveTab('security')} className={`${activeTab === 'security' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'} whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm`}>
+                                    Security
+                                </button>
+                                </>
                             )}
                         </nav>
                     </div>
 
                     {error && <p className="text-red-500 text-sm text-center mb-4">{error}</p>}
+                    {successMessage && <p className="text-green-500 text-sm text-center mb-4">{successMessage}</p>}
+
 
                     {activeTab === 'profile' && (
                         <form onSubmit={handleUserIdSubmit}>
@@ -881,6 +941,28 @@ const SettingsModal = ({ isOpen, onClose, onSaveUserId, onSaveCardNames, onSignU
                              <div className="bg-gray-50 dark:bg-gray-700/50 -mx-6 -mb-6 px-6 py-3 flex justify-end gap-3 rounded-b-xl mt-6">
                                 <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">Cancel</button>
                                 <button type="submit" disabled={!cardNamesChanged} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:hover:bg-indigo-600">Save Card Names</button>
+                            </div>
+                        </form>
+                    )}
+                    
+                    {activeTab === 'security' && !isAnonymous && (
+                        <form onSubmit={handlePasswordSubmit}>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Update your password here. This will log you out from other sessions.</p>
+                            <div className="mb-4">
+                                <label htmlFor="currentPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Current Password</label>
+                                <input type="password" id="currentPassword" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
+                            </div>
+                            <div className="mb-4">
+                                <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Password</label>
+                                <input type="password" id="newPassword" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
+                            </div>
+                            <div className="mb-4">
+                                <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Confirm New Password</label>
+                                <input type="password" id="confirmPassword" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" required />
+                            </div>
+                             <div className="bg-gray-50 dark:bg-gray-700/50 -mx-6 -mb-6 px-6 py-3 flex justify-end gap-3 rounded-b-xl mt-6">
+                                <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">Cancel</button>
+                                <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600">Update Password</button>
                             </div>
                         </form>
                     )}
