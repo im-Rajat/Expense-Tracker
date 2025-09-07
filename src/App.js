@@ -255,7 +255,7 @@ export default function App() {
         if (!db || !auth) return;
     
         const uniqueId = `guest-${Math.random().toString(36).substring(2, 8)}`;
-        const password = 'password';
+        const password = 'creditcard';
         const email = `${uniqueId}@expense-tracker.app`;
     
         try {
@@ -998,7 +998,7 @@ const AnonymousInfoModal = ({ isOpen, onClose, userId }) => {
     if (!isOpen) return null;
 
     const handleCopy = () => {
-        const textToCopy = `User ID: ${userId}\nPassword: password`;
+        const textToCopy = `User ID: ${userId}\nPassword: creditcard`;
         const textArea = document.createElement("textarea");
         textArea.style.position = 'fixed';
         textArea.style.top = 0;
@@ -1039,7 +1039,7 @@ const AnonymousInfoModal = ({ isOpen, onClose, userId }) => {
                         </div>
                         <div>
                             <span className="font-semibold text-gray-700 dark:text-gray-300">Password:</span>
-                            <code className="ml-2 bg-gray-200 dark:bg-gray-600 p-1 rounded font-mono">password</code>
+                            <code className="ml-2 bg-gray-200 dark:bg-gray-600 p-1 rounded font-mono">creditcard</code>
                         </div>
                     </div>
                 </div>
