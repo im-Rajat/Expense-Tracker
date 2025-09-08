@@ -20,6 +20,7 @@ export default function App() {
     const [selectedExpenses, setSelectedExpenses] = useState([]);
     const [selectedBinItems, setSelectedBinItems] = useState([]);
     const [filterCard, setFilterCard] = useState('all'); // 'all', 'card1', or 'card2'
+    const [searchQuery, setSearchQuery] = useState(''); // State for the search query
     const [customUserId, setCustomUserId] = useState('');
     const [isAnonInfoModalOpen, setIsAnonInfoModalOpen] = useState(false);
     const [generatedAnonId, setGeneratedAnonId] = useState('');
@@ -148,14 +149,48 @@ export default function App() {
 
     // --- Client-side Filtering ---
     const filteredExpenses = useMemo(() => {
-        if (filterCard === 'all') return expenses;
-        return expenses.filter(expense => expense.card === filterCard);
-    }, [expenses, filterCard]);
+        let searchableExpenses = expenses;
+
+        if (filterCard !== 'all') {
+            searchableExpenses = searchableExpenses.filter(expense => expense.card === filterCard);
+        }
+
+        if (searchQuery.trim() !== '') {
+            const lowercasedQuery = searchQuery.toLowerCase();
+            searchableExpenses = searchableExpenses.filter(expense => {
+                const date = new Date(expense.date).toLocaleDateString();
+                return (
+                    expense.amount.toString().toLowerCase().includes(lowercasedQuery) ||
+                    (expense.description && expense.description.toLowerCase().includes(lowercasedQuery)) ||
+                    date.toLowerCase().includes(lowercasedQuery)
+                );
+            });
+        }
+        
+        return searchableExpenses;
+    }, [expenses, filterCard, searchQuery]);
 
     const filteredRecycleBin = useMemo(() => {
-        if (filterCard === 'all') return recycleBin;
-        return recycleBin.filter(item => item.card === filterCard);
-    }, [recycleBin, filterCard]);
+        let searchableBin = recycleBin;
+
+        if (filterCard !== 'all') {
+            searchableBin = searchableBin.filter(item => item.card === filterCard);
+        }
+        
+        if (searchQuery.trim() !== '') {
+            const lowercasedQuery = searchQuery.toLowerCase();
+            searchableBin = searchableBin.filter(item => {
+                const date = new Date(item.date).toLocaleDateString();
+                return (
+                    item.amount.toString().toLowerCase().includes(lowercasedQuery) ||
+                    (item.description && item.description.toLowerCase().includes(lowercasedQuery)) ||
+                    date.toLowerCase().includes(lowercasedQuery)
+                );
+            });
+        }
+        
+        return searchableBin;
+    }, [recycleBin, filterCard, searchQuery]);
 
     // --- Selection Handlers ---
     const handleToggleSelect = (expenseId, view) => {
@@ -532,15 +567,53 @@ export default function App() {
                 />
                 <main className="flex flex-col flex-grow min-h-0">
                     <SummaryCards totals={totals} cardNames={cardNames} />
-                    <NavBar currentView={currentView} setCurrentView={setCurrentView} onAddNew={() => openModal()} filterCard={filterCard} onFilterChange={setFilterCard} cardNames={cardNames} />
+                    <NavBar 
+                        currentView={currentView} 
+                        setCurrentView={setCurrentView} 
+                        onAddNew={() => openModal()} 
+                        filterCard={filterCard} 
+                        onFilterChange={setFilterCard} 
+                        cardNames={cardNames}
+                    />
                     {error && <p className="text-red-500 bg-red-100 dark:bg-red-900/20 dark:text-red-400 p-3 rounded-lg my-4 text-center">{error}</p>}
                     <div className="flex-grow overflow-y-auto mt-4">
                         {isLoading ? <div className="text-center p-10"><p>Loading your expenses...</p></div> : 
                             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 sm:p-6">
                                 {currentView === 'expenses' ? (
-                                    <ExpenseList expenses={filteredExpenses} onEdit={openModal} onDelete={handleDeleteExpense} cardNames={cardNames} selectedExpenses={selectedExpenses} onToggleSelect={(id) => handleToggleSelect(id, 'expenses')} onToggleSelectAll={() => handleToggleSelectAll('expenses')} onDeleteSelected={handleDeleteSelected} />
+                                    (expenses.length > 0 || searchQuery) ? (
+                                    <ExpenseList 
+                                        expenses={filteredExpenses} 
+                                        onEdit={openModal} 
+                                        onDelete={handleDeleteExpense} 
+                                        cardNames={cardNames} 
+                                        selectedExpenses={selectedExpenses} 
+                                        onToggleSelect={(id) => handleToggleSelect(id, 'expenses')} 
+                                        onToggleSelectAll={() => handleToggleSelectAll('expenses')} 
+                                        onDeleteSelected={handleDeleteSelected}
+                                        searchQuery={searchQuery}
+                                        onSearchChange={(e) => setSearchQuery(e.target.value)}
+                                     />
+                                    ) : (
+                                        <p className="text-center text-gray-500 dark:text-gray-400 py-8">No expenses yet. Add one to get started!</p>
+                                    )
                                 ) : (
-                                    <RecycleBin bin={filteredRecycleBin} onRestore={handleRestoreExpense} onDelete={handlePermanentDelete} cardNames={cardNames} selectedBinItems={selectedBinItems} onToggleSelect={(id) => handleToggleSelect(id, 'bin')} onToggleSelectAll={() => handleToggleSelectAll('bin')} onRestoreSelected={handleRestoreSelected} onDeleteSelected={handlePermanentDeleteSelected} />
+                                    (recycleBin.length > 0 || searchQuery) ? (
+                                    <RecycleBin 
+                                        bin={filteredRecycleBin} 
+                                        onRestore={handleRestoreExpense} 
+                                        onDelete={handlePermanentDelete} 
+                                        cardNames={cardNames} 
+                                        selectedBinItems={selectedBinItems} 
+                                        onToggleSelect={(id) => handleToggleSelect(id, 'bin')} 
+                                        onToggleSelectAll={() => handleToggleSelectAll('bin')} 
+                                        onRestoreSelected={handleRestoreSelected} 
+                                        onDeleteSelected={handlePermanentDeleteSelected}
+                                        searchQuery={searchQuery}
+                                        onSearchChange={(e) => setSearchQuery(e.target.value)}
+                                    />
+                                    ) : (
+                                        <p className="text-center text-gray-500 dark:text-gray-400 py-8">Recycle bin is empty.</p>
+                                    )
                                 )}
                             </div>
                         }
@@ -648,36 +721,38 @@ const SummaryCards = ({ totals, cardNames }) => (
 );
 
 const NavBar = ({ currentView, setCurrentView, onAddNew, filterCard, onFilterChange, cardNames }) => (
-    <div className="flex flex-col sm:flex-row items-center justify-between bg-white dark:bg-gray-800 p-2 rounded-xl shadow-md gap-2">
-        <div className="flex bg-gray-200 dark:bg-gray-700 p-1 rounded-lg">
-            <button onClick={() => setCurrentView('expenses')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'expenses' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
-                Active Expenses
-            </button>
-            <button onClick={() => setCurrentView('bin')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'bin' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
-                Recycle Bin
-            </button>
-        </div>
+    <div className="flex flex-wrap items-center justify-between bg-white dark:bg-gray-800 p-2 rounded-xl shadow-md gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+            <div className="flex bg-gray-200 dark:bg-gray-700 p-1 rounded-lg">
+                <button onClick={() => setCurrentView('expenses')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'expenses' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
+                    Active Expenses
+                </button>
+                <button onClick={() => setCurrentView('bin')} className={`px-4 py-2 text-sm font-semibold rounded-md transition-colors ${currentView === 'bin' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
+                    Recycle Bin
+                </button>
+            </div>
 
-        <div className="flex bg-gray-200 dark:bg-gray-700 p-1 rounded-lg">
-            <button onClick={() => onFilterChange('all')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${filterCard === 'all' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
-                All
-            </button>
-            <button onClick={() => onFilterChange('card1')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors truncate ${filterCard === 'card1' ? 'bg-blue-500 dark:bg-blue-600 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
-                {cardNames.card1}
-            </button>
-            <button onClick={() => onFilterChange('card2')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors truncate ${filterCard === 'card2' ? 'bg-green-500 dark:bg-green-600 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
-                {cardNames.card2}
-            </button>
+            <div className="flex bg-gray-200 dark:bg-gray-700 p-1 rounded-lg">
+                <button onClick={() => onFilterChange('all')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${filterCard === 'all' ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
+                    All
+                </button>
+                <button onClick={() => onFilterChange('card1')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors truncate ${filterCard === 'card1' ? 'bg-blue-500 dark:bg-blue-600 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
+                    {cardNames.card1}
+                </button>
+                <button onClick={() => onFilterChange('card2')} className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors truncate ${filterCard === 'card2' ? 'bg-green-500 dark:bg-green-600 text-white shadow' : 'text-gray-600 dark:text-gray-300'}`}>
+                    {cardNames.card2}
+                </button>
+            </div>
         </div>
         
-        <button onClick={onAddNew} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-transform transform hover:scale-105">
-            <PlusIcon /> Add New Expense
+        <button onClick={onAddNew} className="bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-transform transform hover:scale-105">
+            <PlusIcon /> Add New
         </button>
     </div>
 );
 
-const ExpenseList = ({ expenses, onEdit, onDelete, cardNames, selectedExpenses, onToggleSelect, onToggleSelectAll, onDeleteSelected }) => {
-    if (expenses.length === 0) {
+const ExpenseList = ({ expenses, onEdit, onDelete, cardNames, selectedExpenses, onToggleSelect, onToggleSelectAll, onDeleteSelected, searchQuery, onSearchChange }) => {
+    if (expenses.length === 0 && !searchQuery) {
         return <p className="text-center text-gray-500 dark:text-gray-400 py-8">No expenses yet. Add one to get started!</p>;
     }
     const getCardName = (cardId) => cardId === 'card1' ? cardNames.card1 : cardNames.card2;
@@ -690,13 +765,27 @@ const ExpenseList = ({ expenses, onEdit, onDelete, cardNames, selectedExpenses, 
                     <button onClick={onDeleteSelected} className="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-lg text-sm">Delete Selected</button>
                 </div>
             )}
-            <div className="space-y-3">
-                <div className="flex items-center bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+                <div className="flex items-center">
                     <input type="checkbox" className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500" onChange={onToggleSelectAll} checked={expenses.length > 0 && selectedExpenses.length === expenses.length} />
                     <span className="ml-4 text-sm font-medium text-gray-500 dark:text-gray-400">Select All</span>
                 </div>
-
-                {expenses.map(expense => (
+                <div className="relative flex-grow sm:flex-grow-0 sm:w-64">
+                    <input
+                        type="text"
+                        placeholder="Search..."
+                        value={searchQuery}
+                        onChange={onSearchChange}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white transition-all duration-300"
+                    />
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                        <SearchIcon />
+                    </div>
+                </div>
+            </div>
+            
+            <div className="space-y-3">
+                {expenses.length > 0 ? expenses.map(expense => (
                     <div key={expense.id} className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors">
                         <input type="checkbox" className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500" checked={selectedExpenses.includes(expense.id)} onChange={() => onToggleSelect(expense.id)} />
                         <div className="flex items-center gap-4 flex-grow ml-4">
@@ -714,14 +803,16 @@ const ExpenseList = ({ expenses, onEdit, onDelete, cardNames, selectedExpenses, 
                             <button onClick={() => onDelete(expense)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-600 rounded-full transition-colors"><TrashIcon /></button>
                         </div>
                     </div>
-                ))}
+                )) : (
+                    <p className="text-center text-gray-500 dark:text-gray-400 py-8">No expenses match your search.</p>
+                )}
             </div>
         </div>
     );
 };
 
-const RecycleBin = ({ bin, onRestore, onDelete, cardNames, selectedBinItems, onToggleSelect, onToggleSelectAll, onRestoreSelected, onDeleteSelected }) => {
-    if (bin.length === 0) {
+const RecycleBin = ({ bin, onRestore, onDelete, cardNames, selectedBinItems, onToggleSelect, onToggleSelectAll, onRestoreSelected, onDeleteSelected, searchQuery, onSearchChange }) => {
+    if (bin.length === 0 && !searchQuery) {
         return <p className="text-center text-gray-500 dark:text-gray-400 py-8">Recycle bin is empty.</p>;
     }
     const getCardName = (cardId) => cardId === 'card1' ? cardNames.card1 : cardNames.card2;
@@ -737,13 +828,27 @@ const RecycleBin = ({ bin, onRestore, onDelete, cardNames, selectedBinItems, onT
                     </div>
                 </div>
             )}
-             <div className="space-y-3">
-                 <div className="flex items-center bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg">
+             <div className="flex flex-wrap items-center justify-between gap-4 mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+                 <div className="flex items-center">
                     <input type="checkbox" className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500" onChange={onToggleSelectAll} checked={bin.length > 0 && selectedBinItems.length === bin.length} />
                     <span className="ml-4 text-sm font-medium text-gray-500 dark:text-gray-400">Select All</span>
                 </div>
+                <div className="relative flex-grow sm:flex-grow-0 sm:w-64">
+                     <input
+                        type="text"
+                        placeholder="Search..."
+                        value={searchQuery}
+                        onChange={onSearchChange}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white transition-all duration-300"
+                    />
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                        <SearchIcon />
+                    </div>
+                </div>
+            </div>
 
-                {bin.map(expense => (
+            <div className="space-y-3">
+                {bin.length > 0 ? bin.map(expense => (
                     <div key={expense.id} className="flex items-center justify-between bg-red-50 dark:bg-red-900/20 p-3 rounded-lg">
                         <input type="checkbox" className="form-checkbox h-5 w-5 text-indigo-600 bg-gray-200 dark:bg-gray-600 border-gray-300 dark:border-gray-500 rounded focus:ring-indigo-500" checked={selectedBinItems.includes(expense.id)} onChange={() => onToggleSelect(expense.id)} />
                         <div className="flex-1 ml-4">
@@ -756,7 +861,9 @@ const RecycleBin = ({ bin, onRestore, onDelete, cardNames, selectedBinItems, onT
                             <button onClick={() => onDelete(expense.id)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-red-900/50 rounded-full transition-colors"><XCircleIcon /></button>
                         </div>
                     </div>
-                ))}
+                )) : (
+                     <p className="text-center text-gray-500 dark:text-gray-400 py-8">No items match your search.</p>
+                )}
             </div>
         </div>
     );
@@ -1065,3 +1172,4 @@ const XCircleIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="18" he
 const MoonIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>;
 const SunIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>;
 const UserIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>;
+const SearchIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>);
